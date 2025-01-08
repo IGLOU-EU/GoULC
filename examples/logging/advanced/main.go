@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	// The cancel context used to gracefull shutdown on a "critical" error
+	// The cancel context used to graceful shutdown on a "critical" error
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create log writer
@@ -55,7 +55,7 @@ func main() {
 	go func() {
 		// Give it to a fonction that "critical fail"
 		// But we have a cancel context so we not use os.Exit this time
-		exemple(mainLogger.WithGroup("withCancel"))
+		example(mainLogger.WithGroup("withCancel"))
 		wg.Done()
 	}()
 
@@ -65,12 +65,12 @@ func main() {
 	}
 	wg.Wait()
 
-	mainLogger.Info("A gracefull shutdown with a critical example.")
+	mainLogger.Info("A graceful shutdown with a critical example.")
 
 	fmt.Println("take a loot at app.log and error.log")
 }
 
-func exemple(logger *slog.Logger) {
+func example(logger *slog.Logger) {
 	logger.Debug("start to be critical")
 	logging.Critical(logger, "This is a demo of something goes wrong, like very wrong !", "ctx", "ctx", "error", "error")
 	logger.Debug("end to be critical")
