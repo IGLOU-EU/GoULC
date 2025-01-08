@@ -12,9 +12,8 @@ import (
 func main() {
 	// Create configuration
 	cfg := &model.Config{
-		Level:     "DEBUG",
-		Colored:   true,
-		AddSource: true,
+		Level:   "DEBUG",
+		Colored: true,
 	}
 
 	// Create a new logger with configuration
