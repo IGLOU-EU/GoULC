@@ -26,7 +26,13 @@ GoULC (pronounced as one word) is a collection of Go libraries I developed for m
 
 A light and flexible logging package built on top of `log/slog` that supports multiple output handlers, log levels, and framework integrations.
 
-See the [logging package documentation](logging/README.md) for detailed usage and integration examples.
+See the [logging package documentation](logging/README.md).
+
+### 📏 ByteSize Package
+
+A package for working with byte sizes in Go. It provides support for parsing, formatting, and arithmetic operations for byte sizes from Bytes up to Pebibytes.
+
+See the [bytesize package documentation](bytesize/README.md).
 
 ## 🤝 Contributing
 
