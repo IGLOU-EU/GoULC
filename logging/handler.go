@@ -39,9 +39,9 @@ const (
 	colorMagenta      = "\033[35m"
 	colorBrightGrey   = "\033[90m"
 	colorBrightYellow = "\033[93m"
-
-	timeFormat = "[2006-01-02 15:04:05]"
 )
+
+var TimeFormat = "[2006-01-02 15:04:05]"
 
 // Handler implements slog.Handler interface with additional features:
 // - Colored output support with ANSI colors
@@ -175,7 +175,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	buf.Grow(1024) // Allocate a default size
 
 	// Date and time
-	buf.WriteString(time.Now().Format(timeFormat))
+	buf.WriteString(time.Now().Format(TimeFormat))
 	buf.WriteRune(' ')
 
 	// Level

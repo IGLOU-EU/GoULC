@@ -29,6 +29,9 @@ func main() {
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message")
 
+	// Hot change of the time format
+	logging.TimeFormat = "[20060102:150405]"
+
 	// Logging with namespaces
 	mainLogger := logger.WithGroup("main")
 	mainLogger.Info("Starting application")

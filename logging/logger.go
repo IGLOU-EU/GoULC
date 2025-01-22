@@ -28,13 +28,10 @@ import (
 	"gitlab.com/iglou.eu/goulc/logging/model"
 )
 
-// Logger extends slog.Logger with additional configuration options
-// and custom handling capabilities. It provides structured logging
-// with support for colored output and source code information.
-type Logger struct {
-	*slog.Logger
-	cfg *model.Config
-}
+const (
+	ErrWriterOutNil   = "out writer is nil, this is probably a mistake"
+	ErrLogLevelUnknow = "Unknow log level provided"
+)
 
 // DefaultWriter provides the standard output configuration where
 // normal logs go to os.Stdout and error logs to os.Stderr
@@ -48,7 +45,7 @@ var DefaultConfig = &model.Config{Level: "INFO", Colored: false, AddSource: true
 
 // New is a constructor for the Logger type.
 // Same as NewWithWriter with the default writer.
-func New(basePath string, cfg *model.Config) (*Logger, error) {
+func New(basePath string, cfg *model.Config) (*slog.Logger, error) {
 	return NewWithWriter(basePath, DefaultWriter, cfg)
 }
 
@@ -61,13 +58,13 @@ func New(basePath string, cfg *model.Config) (*Logger, error) {
 // case of writer.Out is nil and use writer.Out as writer.Err if it is nil.
 //
 // The cfg use the default configuration if nil
-func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*Logger, error) {
+func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*slog.Logger, error) {
 	if writer == nil {
 		writer = DefaultWriter
 	}
 
 	if writer.Out == nil {
-		return nil, errors.New("out writer is nil, this is probably a mistake")
+		return nil, errors.New(ErrWriterOutNil)
 	}
 
 	if writer.Err == nil {
@@ -83,7 +80,7 @@ func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*L
 		return nil, err
 	}
 
-	log := slog.New(NewHandler(
+	return slog.New(NewHandler(
 		cfg.Cancel,
 		writer,
 		&HandlerOptions{
@@ -95,12 +92,7 @@ func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*L
 			AddSource: cfg.AddSource,
 			Level:     level,
 		},
-	))
-
-	return &Logger{
-		Logger: log,
-		cfg:    cfg,
-	}, nil
+	)), nil
 }
 
 // Critical logs a critical error message along with any provided attributes,
@@ -130,6 +122,6 @@ func getLevel(level string) (slog.Level, error) {
 	case "ERROR":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, errors.New("invalid log level provided: " + level)
+		return slog.LevelInfo, errors.New(ErrLogLevelUnknow + ": " + level)
 	}
 }
