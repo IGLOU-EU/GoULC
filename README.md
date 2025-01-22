@@ -28,11 +28,17 @@ A light and flexible logging package built on top of `log/slog` that supports mu
 
 See the [logging package documentation](logging/README.md).
 
-### 📏 ByteSize Package
+### 📏 ByteSize
 
 A package for working with byte sizes in Go. It provides support for parsing, formatting, and arithmetic operations for byte sizes from Bytes up to Pebibytes.
 
 See the [bytesize package documentation](bytesize/README.md).
+
+### ⏱️ Duration
+
+A Go package for handling time durations with JSON support. It wraps the standard `time.Duration` type to provide parsing and formatting capabilities for JSON serialization and deserialization.
+
+See the [duration package documentation](duration/README.md).
 
 ## 🤝 Contributing
 
