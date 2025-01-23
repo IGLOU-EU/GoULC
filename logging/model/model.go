@@ -33,7 +33,7 @@ type Config struct {
 	// Colored enables ANSI color output in log messages
 	Colored bool `json:"colored"`
 	// AddSource includes the source file and line number in log messages
-	AddSource bool `json:"addSource"`
+	AddSource bool `json:"add_source"`
 
 	// Cancel is a context.CancelFunc used to cancel a global context
 	// in case of critical errors
