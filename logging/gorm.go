@@ -29,6 +29,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"gitlab.com/iglou.eu/goulc/hided"
 )
 
 type GormLogger struct {
@@ -72,4 +74,16 @@ func (g *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 	}
 
 	g.DebugContext(ctx, msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
+}
+
+// ParamsFilter implements gorm.ParamsFilter interface, it iterates through
+// params and applies Hiding() when there is an hided.GormHider sensitive values
+func (g *GormLogger) ParamsFilter(ctx context.Context, sql string, params ...interface{}) (string, []interface{}) {
+	for i := range params {
+		if sensitive, ok := params[i].(hided.GormHider); ok {
+			params[i] = sensitive.Hiding()
+		}
+	}
+
+	return sql, params
 }
