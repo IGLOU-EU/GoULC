@@ -21,7 +21,8 @@ A Go package to prevent sensitive data leakage from logs and error messages. It 
 
 ## 📝 Examples
 
-Usage examples can be found in the [examples](../examples/hided) directory.
+Usage examples can be found in the [examples](../examples/hided) directory.   
+For Gorm example, view the [gorm logging examples](../examples/logging/gorm)
 
 ## 📜 License
 

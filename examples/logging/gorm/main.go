@@ -2,6 +2,7 @@
 package main
 
 import (
+	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/logging"
 	"gitlab.com/iglou.eu/goulc/logging/model"
 	"gorm.io/driver/sqlite"
@@ -11,8 +12,9 @@ import (
 // User is a simple model for demonstration
 type User struct {
 	gorm.Model
-	Name  string
-	Email string
+	Name   string
+	Email  string
+	Secret hided.String
 }
 
 func main() {
@@ -44,13 +46,16 @@ func main() {
 
 	// Create a user - this will generate log entries
 	user := User{
-		Name:  "John Doe",
-		Email: "john@example.com",
+		Name:  "Clark Kent",
+		Email: "c-kent@daily-planet.com",
+		// With a super secret
+		Secret: "I'm Superman !",
 	}
 	result := db.Create(&user)
 	if result.Error != nil {
 		logger.Error("Failed to create user", "error", result.Error)
 	}
+	logger.Info("Ho ! The secret is hidded on the log !")
 
 	// Find the user - this will also generate log entries
 	var foundUser User
@@ -65,8 +70,18 @@ func main() {
 		logger.Error("Failed to find user", "error", result.Error)
 	}
 
+	// Print the user infos
+	logger.Info("User finded", "user", foundUser)
+	logger.Info("The secret of him is...", "secret", foundUser.Secret.Value())
+
 	// Update the user
-	result = db.Model(&foundUser).Update("Name", "John Smith")
+	result = db.Model(&foundUser).Update("Name", "Clark Kent-Lane")
+	if result.Error != nil {
+		logger.Error("Failed to update user", "error", result.Error)
+	}
+
+	// Update the secret - Still not printed into logger
+	result = db.Model(&foundUser).Update("Secret", hided.String("Ho no !"))
 	if result.Error != nil {
 		logger.Error("Failed to update user", "error", result.Error)
 	}
