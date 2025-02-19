@@ -41,6 +41,12 @@ A Go package for handling time durations with JSON support. It wraps the standar
 
 See the [duration package documentation](duration/README.md).
 
+### 🙈 Hided
+
+A Go package to prevent sensitive data leakage from logs and error messages. It provides a simple interface with support for obfuscation and integration with Gorm ORM.
+
+See the [hided package documentation](hided/README.md).
+
 ## 🤝 Contributing
 
 Contributions are always welcome ! Feel free to submit a Pull Request. 🎉
