@@ -22,5 +22,5 @@ func (s String) HashMD5() string {
 
 // Value returns the underlying string value
 func (s String) Value() any {
-	return s
+	return string(s)
 }
