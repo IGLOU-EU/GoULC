@@ -1,5 +1,6 @@
 # GoULC (Go Utils Library Collection) 🚀
 
+[![Matrix](https://img.shields.io/matrix/iglou.eu%3Amatrix.org?logo=matrix&color=yellow)](https://matrix.to/#/#iglou.eu:matrix.org)
 [![Go Report Card](https://goreportcard.com/badge/gitlab.com/iglou.eu/goulc)](https://goreportcard.com/report/gitlab.com/iglou.eu/goulc)
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -42,11 +43,11 @@ See the [duration package documentation](duration/README.md).
 
 ## 🤝 Contributing
 
-While this is primarily a personal toolkit, contributions are welcome if you find something that could be improved! Feel free to submit a Pull Request. 🎉
+Contributions are always welcome ! Feel free to submit a Pull Request. 🎉
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+3. Commit your changes (`git commit -m 'feat: my amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
@@ -58,7 +59,7 @@ This project is licensed under the [GNU General Public License v3.0](https://www
 
 - **Report bugs** by opening an issue
 - **Request features** through issues
-- **Ask questions** in discussions
+- **Ask questions** in issues
 
 ---
 
