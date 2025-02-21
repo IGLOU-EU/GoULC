@@ -30,8 +30,8 @@ import (
 
 type GormString string
 
-// GormValue implements gorm.Valuer to safely pass string data to gorm,
-// you need to implements gorm.ParamsFilter to keep value secret into your lo
+// GormValue implements gorm.Valuer to safely pass string data to gorm, you
+// need to implement gorm.ParamsFilter to keep value secret into your logger
 func (s String) GormValue(ctx context.Context, db *gorm.DB) clause.Expr {
 	return clause.Expr{
 		SQL:  "?",
