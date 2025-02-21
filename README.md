@@ -47,6 +47,12 @@ A Go package to prevent sensitive data leakage from logs and error messages. It 
 
 See the [hided package documentation](hided/README.md).
 
+### 🔤 ASCII Package
+
+A Go package for validating and checking ASCII string properties. It provides simple functions to verify ASCII compliance and detect special characters.
+
+See the [ascii package documentation](ascii/README.md).
+
 ## 🤝 Contributing
 
 Contributions are always welcome ! Feel free to submit a Pull Request. 🎉
