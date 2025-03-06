@@ -23,11 +23,11 @@ GoULC (pronounced as one word) is a collection of Go libraries I developed for m
 
 ## 📦 Available Packages for Now
 
-### 📝 Logging
+### 🔤 ASCII Package
 
-A light and flexible logging package built on top of `log/slog` that supports multiple output handlers, log levels, and framework integrations.
+A Go package for validating and checking ASCII string properties. It provides simple functions to verify ASCII compliance and detect special characters.
 
-See the [logging package documentation](logging/README.md).
+See the [ascii package documentation](ascii/README.md).
 
 ### 📏 ByteSize
 
@@ -47,11 +47,17 @@ A Go package to prevent sensitive data leakage from logs and error messages. It 
 
 See the [hided package documentation](hided/README.md).
 
-### 🔤 ASCII Package
+### 🌐 HTTP Package
 
-A Go package for validating and checking ASCII string properties. It provides simple functions to verify ASCII compliance and detect special characters.
+A Go package providing a flexible and thread-safe HTTP client with built-in support for various authentication methods and advanced features.
 
-See the [ascii package documentation](ascii/README.md).
+See the [hided package documentation](http/README.md).
+
+### 📝 Logging
+
+A light and flexible logging package built on top of `log/slog` that supports multiple output handlers, log levels, and framework integrations.
+
+See the [logging package documentation](logging/README.md).
 
 ## 🤝 Contributing
 
