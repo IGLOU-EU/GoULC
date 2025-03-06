@@ -57,34 +57,42 @@ var _ auth.Authenticator = &ClientCredentials{}
 // ClientCredentials implements the OAuth2 Client Credentials Authentication
 // scheme, managing access tokens and handling authentication requests.
 type ClientCredentials struct {
-	log   *slog.Logger
-	http  *client.Client
-	token *TokenResponse
+	log  *slog.Logger
+	http *client.Client
 
 	Config     Config
 	ClientAuth ClientCredentialsType
+
+	Token TokenResponse
 }
 
 // NewClientCredentials creates a new ClientCredentials instance with
 // the specified authentication type, configuration, and logger.
 func NewClientCredentials(
-	clientAuth ClientCredentialsType, config Config, log *slog.Logger,
+	clientAuth ClientCredentialsType, config Config, log *slog.Logger, http *client.Client,
 ) (*ClientCredentials, error) {
 	if log == nil {
 		return nil, errors.New("nil logger provided")
 	}
 
-	http, err := client.New(
-		nil, config.Endpoint.URL,
-		nil, &client.OptDefault,
-		log.WithGroup("oauth2"))
-	if err != nil {
-		return nil, err
+	var httpInt *client.Client
+	if http != nil {
+		httpInt = http
+	} else {
+		http, err := client.New(
+			nil, config.Endpoint.URL,
+			nil, &client.OptDefault,
+			log.WithGroup("oauth2"))
+		if err != nil {
+			return nil, err
+		}
+
+		httpInt = &http
 	}
 
 	return &ClientCredentials{
 		log:  log,
-		http: &http,
+		http: httpInt,
 
 		Config:     config,
 		ClientAuth: clientAuth,
@@ -99,7 +107,7 @@ func (g *ClientCredentials) Name() string {
 // Update refreshes the access token if it has expired,
 // ensuring valid authentication for requests.
 func (g *ClientCredentials) Update() error {
-	if g.token != nil && g.token.expireAt.After(time.Now()) {
+	if g.Token.ExpireAt.After(time.Now()) {
 		g.log.Debug("Access token are not expired")
 		return nil
 	}
@@ -107,7 +115,7 @@ func (g *ClientCredentials) Update() error {
 	// There is no refresh token on client credentials grant
 	// RFC 6749 §4.4.3: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3
 	g.log.Debug("Creation of a new access token waze required",
-		"access token", g.token)
+		"access_token", g.Token)
 	return g.newToken()
 }
 
@@ -117,22 +125,21 @@ func (g *ClientCredentials) Header(
 	_ methods.Method, _ *url.URL, _ []byte,
 ) (string, string, error) {
 	return ClientCredentialsHeaderName,
-		ClientCredentialsHeaderPrefix + g.token.Token.Value().(string),
+		ClientCredentialsHeaderPrefix + g.Token.Token.Value().(string),
 		nil
 }
 
 // Clone creates a deep copy of the ClientCredentials instance,
 // ensuring thread-safe modifications.
 func (g *ClientCredentials) Clone() auth.Authenticator {
-	token := *g.token
-
 	return &ClientCredentials{
-		log:   g.log,
-		http:  g.http.NewChild(""),
-		token: &token,
+		log:  g.log,
+		http: g.http.NewChild(""),
 
 		Config:     g.Config,
 		ClientAuth: g.ClientAuth,
+
+		Token: g.Token,
 	}
 }
 
@@ -190,13 +197,14 @@ func (g *ClientCredentials) newToken() error {
 		g.log.Debug("Type insertion issue",
 			"type", reflect.TypeOf(res.BodyUml),
 			"content", res.BodyUml)
+
 		return errors.New(
 			"The body unmarshaler does not match with the oauth2.Response declaration")
 	}
 
 	// Feed the token !
-	g.token = &tokRes.TokenResponse
-	g.token.expireAt = time.Now().Add(g.token.ExpiresIn.Duration)
+	g.Token = tokRes.TokenResponse
+	g.Token.ExpireAt = time.Now().Add(g.Token.ExpiresIn.Duration)
 
 	return nil
 }
