@@ -26,7 +26,16 @@ import (
 
 	"gitlab.com/iglou.eu/goulc/duration"
 	"gitlab.com/iglou.eu/goulc/hided"
+	"gitlab.com/iglou.eu/goulc/http/client"
 )
+
+const (
+	// ResponseName is the identifier for Response Unmarshaler
+	ResponseName = "oauth2.Response"
+)
+
+// Verify Response implements client.Unmarshaler interface
+var _ client.Unmarshaler = &Response{}
 
 // TokenResponse represents successful access token response
 // RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
@@ -39,7 +48,7 @@ type TokenResponse struct {
 
 	// Store the issued date
 	// RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
-	expireAt time.Time
+	ExpireAt time.Time
 }
 
 // ErrorResponse represents error response
@@ -62,7 +71,7 @@ type Response struct {
 // Name returns the identifier for this response type.
 // It implements the response.Response interface.
 func (r Response) Name() string {
-	return "oauth2.Response"
+	return ResponseName
 }
 
 // Unmarshal parses the JSON-encoded response body and stores the result
