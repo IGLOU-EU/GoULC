@@ -709,7 +709,9 @@ func (main *Client) Do(
 			"body_size", len(res.Body))
 
 		res.BodyUml = uml
-		if err := res.BodyUml.Unmarshal(res.StatusCode, res.Body); err != nil {
+		if err := res.BodyUml.Unmarshal(
+			res.StatusCode, res.Header, res.Body,
+		); err != nil {
 			return nil, errors.Join(ErrRequestFailed, err)
 		}
 	}
