@@ -19,7 +19,10 @@
 
 package client
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // Ratelimiter defines an interface for rate limiting HTTP requests.
 // Implementations of this interface can be used to control the rate
@@ -55,7 +58,8 @@ type Marshaller interface {
 type Unmarshaler interface {
 	Nameable
 
-	// Unmarshal parses the byte slice and populates the receiver with the parsed data.
-	// It takes the HTTP response status code and the byte slice as arguments.
-	Unmarshal(statusCode int, body []byte) error
+	// Unmarshal parses the byte slice and populates the receiver.
+	// It takes the HTTP response status code, header response and
+	// the byte slice as arguments.
+	Unmarshal(statusCode int, header http.Header, body []byte) error
 }

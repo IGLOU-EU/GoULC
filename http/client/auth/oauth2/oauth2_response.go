@@ -21,6 +21,7 @@ package oauth2
 
 import (
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/duration"
@@ -68,6 +69,6 @@ func (r Response) Name() string {
 // in the Response struct. It implements the response.Response interface.
 //
 // Return an error if JSON unmarshaling fails, nil otherwise.
-func (r *Response) Unmarshal(_ int, body []byte) error {
+func (r *Response) Unmarshal(_ int, _ http.Header, body []byte) error {
 	return json.Unmarshal(body, r)
 }
