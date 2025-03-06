@@ -220,7 +220,13 @@ func (c *Client) NewChild(path string) *Client {
 	child := c.Clone()
 
 	if path != "" {
-		child.URL.Path = child.URL.Path + utils.PathFormatting(path)
+		newPath := utils.PathFormatting(path)
+
+		if child.URL.Path == "/" {
+			child.URL.Path = newPath
+		} else {
+			child.URL.Path = child.URL.Path + newPath
+		}
 	}
 
 	c.logger.Debug("new child client created",
