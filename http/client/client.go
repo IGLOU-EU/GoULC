@@ -485,7 +485,7 @@ func (c *Client) Close() error {
 // DoWithMarshal is a convenience function that performs a client.Do() call but
 // with a body Marshaller instance. For nil body, prefer to use Do instead.
 func (main *Client) DoWithMarshal(
-	method methods.Method, body Marshaller, uml Unmarshaler,
+	method methods.Method, body Marshaler, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
 	main.Mu.RLock()

@@ -42,7 +42,7 @@ type Nameable interface {
 
 // Marshaller defines an interface for types that can marshal themselves
 // into a byte slice.
-type Marshaller interface {
+type Marshaler interface {
 	Nameable
 
 	// ContentType returns the content type of the marshalled data.
