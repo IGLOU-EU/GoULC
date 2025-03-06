@@ -389,10 +389,11 @@ func (c *Client) FollowRedirects(trace *[]Redirects) func(req *http.Request, via
 			prevStatus = prev.Response.Status
 		}
 		*trace = append(*trace, Redirects{
-			URL:       req.URL.String(),
-			From:      prevURL,
-			Status:    prevStatus,
-			Timestamp: time.Now(),
+			URL:        req.URL.String(),
+			Status:     req.Response.Status,
+			From:       prevURL,
+			FromStatus: prevStatus,
+			Timestamp:  time.Now(),
 		})
 
 		// Check redirect count to prevent infinite loops

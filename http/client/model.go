@@ -40,10 +40,11 @@ type ErrorHistory struct {
 
 // Redirects stores information about a HTTP redirection.
 type Redirects struct {
-	URL       string
-	From      string
-	Status    string
-	Timestamp time.Time
+	URL        string
+	Status     string
+	From       string
+	FromStatus string
+	Timestamp  time.Time
 }
 
 // Options configures the behavior of the HTTP client.
