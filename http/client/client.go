@@ -647,6 +647,8 @@ func (main *Client) Do(
 	// Configure redirect handling with security considerations
 	if c.Options.Follow {
 		client.CheckRedirect = c.FollowRedirects(&redirectsVia)
+	} else {
+		client.CheckRedirect = nil
 	}
 
 	c.logger.Debug("executing HTTP request",
