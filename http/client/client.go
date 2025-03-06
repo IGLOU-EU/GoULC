@@ -274,7 +274,7 @@ func (c *Client) Clone() *Client {
 	clone.Options.Context, clone.Options.Cancel = context.WithCancel(
 		c.Options.Context)
 
-	if clone.Auth != nil {
+	if c.Auth != nil {
 		clone.Auth = c.Auth.Clone()
 	}
 
