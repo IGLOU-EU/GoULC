@@ -683,7 +683,7 @@ func (main *Client) Do(
 		ErrorRate:    c.calculateErrorRate(httpRes.StatusCode),
 	}
 
-	c.logger.Info("HTTP request",
+	c.logger.Debug("HTTP request",
 		"success", res.Success,
 		"method", req.Method,
 		"path", req.URL.Path,
