@@ -32,7 +32,6 @@ import (
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth/oauth2"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 func TestNewClientCredentials(t *testing.T) {
@@ -213,7 +212,7 @@ func TestClientCredentials_Header(t *testing.T) {
 		ExpireAt:  time.Now().Add(time.Hour),
 	}
 
-	name, value, err := client.Header(methods.GET, nil, nil)
+	name, value, err := client.Header(http.MethodGet, nil, nil)
 	if err != nil {
 		t.Errorf("Header() unexpected error: %v", err)
 	}

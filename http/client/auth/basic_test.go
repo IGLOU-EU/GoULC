@@ -1,11 +1,11 @@
 package auth_test
 
 import (
+	"net/http"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 func TestNewBasic(t *testing.T) {
@@ -57,7 +57,7 @@ func TestNewBasic(t *testing.T) {
 func TestBasic_Header(t *testing.T) {
 	basic, _ := auth.NewBasic("testuser", hided.String("testpass"))
 
-	name, value, err := basic.Header(methods.GET, nil, nil)
+	name, value, err := basic.Header(http.MethodGet, nil, nil)
 	if err != nil {
 		t.Errorf("Basic.Header() unexpected error = %v", err)
 		return

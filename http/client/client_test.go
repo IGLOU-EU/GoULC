@@ -17,7 +17,6 @@ import (
 
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 // mockAuthenticator implements auth.Authenticator for testing
@@ -32,7 +31,7 @@ type mockAuthenticator struct {
 
 func (m *mockAuthenticator) Name() string  { return m.name }
 func (m *mockAuthenticator) Update() error { m.updated = true; return nil }
-func (m *mockAuthenticator) Header(_ methods.Method, _ *url.URL, _ []byte) (string, string, error) {
+func (m *mockAuthenticator) Header(_ string, _ *url.URL, _ []byte) (string, string, error) {
 	if m.wantErr {
 		return "", "", auth.ErrNoUserID
 	}
@@ -279,7 +278,7 @@ func TestClient_Do(t *testing.T) {
 	tests := []struct {
 		name       string
 		path       string
-		method     methods.Method
+		method     string
 		query      [2]string
 		body       []byte
 		notFollow  bool
@@ -291,7 +290,7 @@ func TestClient_Do(t *testing.T) {
 		{
 			name:       "successful GET",
 			path:       "/temple",
-			method:     methods.GET,
+			method:     http.MethodGet,
 			response:   &mockResponse{},
 			wantStatus: http.StatusOK,
 		},
@@ -303,21 +302,21 @@ func TestClient_Do(t *testing.T) {
 		{
 			name:       "server error",
 			path:       "/sarevok",
-			method:     methods.GET,
+			method:     http.MethodGet,
 			wantStatus: http.StatusInternalServerError,
 			wantErr:    true,
 		},
 		{
 			name:       "successfull with URL query",
 			path:       "/prophecy",
-			method:     methods.GET,
+			method:     http.MethodGet,
 			query:      [2]string{"bhaalspawn", "child of murder"},
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "successful POST with body",
 			path:       "/temple",
-			method:     methods.POST,
+			method:     http.MethodPost,
 			body:       []byte(`{"scroll":"identify"}`),
 			response:   &mockResponse{},
 			wantStatus: http.StatusOK,
@@ -325,36 +324,29 @@ func TestClient_Do(t *testing.T) {
 		{
 			name:       "redirect",
 			path:       "/portal",
-			method:     methods.GET,
+			method:     http.MethodGet,
 			response:   &mockResponse{},
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "redirect not accepted",
 			path:       "/portal",
-			method:     methods.GET,
+			method:     http.MethodGet,
 			notFollow:  true,
 			wantStatus: http.StatusTemporaryRedirect,
 		},
 		{
 			name:      "too many redirects",
 			path:      "/maze",
-			method:    methods.GET,
+			method:    http.MethodGet,
 			wantErr:   true,
 			wantErrIs: client.ErrTooManyRedirects,
 		},
 		{
 			name:    "timeout",
 			path:    "/meditation",
-			method:  methods.GET,
+			method:  http.MethodGet,
 			wantErr: true,
-		},
-		{
-			name:      "invalid method",
-			path:      "/success",
-			method:    "INVALID",
-			wantErr:   true,
-			wantErrIs: client.ErrInvalidMethod,
 		},
 	}
 
@@ -406,7 +398,7 @@ func TestClient_Do(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				child := c.NewChild("/temple")
-				resp, err := child.Do(methods.GET, nil, &mockResponse{})
+				resp, err := child.Do(http.MethodGet, nil, &mockResponse{})
 				if err != nil {
 					t.Errorf("Concurrent Do() error = %v", err)
 					return
@@ -424,7 +416,7 @@ func TestClient_Do(t *testing.T) {
 		child := c.NewChild("/necropolis")
 		child.Auth = &basic
 
-		resp, err := child.Do(methods.GET, nil, nil)
+		resp, err := child.Do(http.MethodGet, nil, nil)
 		if err != nil {
 			t.Errorf("Auth Do() error = %v", err)
 			return
@@ -442,7 +434,7 @@ func TestClient_Do(t *testing.T) {
 		child.Options.RateLimiter = rate.NewLimiter(rate.Every(time.Second), 1)
 
 		chronoStart := time.Now()
-		_, err = child.Do(methods.GET, nil, nil)
+		_, err = child.Do(http.MethodGet, nil, nil)
 		if !errors.Is(err, client.ErrTooManyRedirects) {
 			t.Errorf("Do() error = %v, wantErr %v", err, client.ErrTooManyRedirects)
 		}
@@ -459,7 +451,7 @@ func TestClient_Do(t *testing.T) {
 			t.Errorf("Clone() on closed client = %v, want nil", clone)
 		}
 
-		res, err := c.Do(methods.POST, nil, nil)
+		res, err := c.Do(http.MethodPost, nil, nil)
 		if res != nil {
 			t.Errorf("Do() expect to return nil when Client are closed")
 		}
@@ -652,7 +644,7 @@ func TestClient_DoWithMarshal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := c.DoWithMarshal(methods.POST, tt.body, tt.response)
+			resp, err := c.DoWithMarshal(http.MethodPost, tt.body, tt.response)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DoWithMarshal() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -668,7 +660,7 @@ func TestClient_DoWithMarshal(t *testing.T) {
 		t.Errorf("Clone() on closed client = %v, want nil", clone)
 	}
 
-	res, err := c.DoWithMarshal(methods.POST, nil, nil)
+	res, err := c.DoWithMarshal(http.MethodPost, nil, nil)
 	if res != nil {
 		t.Errorf("DoWithMarshal() expect to return nil when Client are closed")
 	}

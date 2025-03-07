@@ -25,8 +25,6 @@ package auth
 
 import (
 	"net/url"
-
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 // Authenticator defines the interface for authentication mechanisms.
@@ -40,7 +38,7 @@ type Authenticator interface {
 	// Header generates the authentication header based on the provided method,
 	// URL, and body. It returns the header key, header value, and any error
 	// encountered.
-	Header(method methods.Method, url *url.URL, body []byte) (string, string, error)
+	Header(method string, url *url.URL, body []byte) (string, string, error)
 
 	// Clone creates and returns a copy of the authenticator.
 	Clone() Authenticator

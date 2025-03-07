@@ -11,7 +11,6 @@ import (
 
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 const (
@@ -42,7 +41,7 @@ func main() {
 	}
 
 	// #01 Get request to / without Unmarshaler
-	res, err := httpClient.Do(methods.GET, nil, nil)
+	res, err := httpClient.Do(http.MethodGet, nil, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -51,7 +50,7 @@ func main() {
 
 	// #02 Get request to / with Unmarshaler
 	// view DoomResponse struct that implements client.Unmarshaler
-	res, err = httpClient.Do(methods.GET, nil, &DoomResponse{})
+	res, err = httpClient.Do(http.MethodGet, nil, &DoomResponse{})
 	if err != nil {
 		panic(err)
 	}
@@ -63,7 +62,7 @@ func main() {
 	// We can update the uri path or create a new client with the path extension
 	// For this example, we will create a new "child client"
 	httpClientDeamons := httpClient.NewChild("/demons")
-	res, err = httpClientDeamons.Do(methods.GET, nil, &DoomResponse{})
+	res, err = httpClientDeamons.Do(http.MethodGet, nil, &DoomResponse{})
 	if err != nil {
 		panic(err)
 	}
@@ -82,7 +81,7 @@ func main() {
 	httpClientDeamons.Auth = &auth
 
 	// And now, we can make the request with authentication
-	res, err = httpClientDeamons.Do(methods.GET, nil, &DoomResponse{})
+	res, err = httpClientDeamons.Do(http.MethodGet, nil, &DoomResponse{})
 	if err != nil {
 		panic(err)
 	}
@@ -105,7 +104,8 @@ func main() {
 	}
 
 	// And now, we can make the request with marshalling
-	res, err = httpClientWeapons.DoWithMarshal(methods.POST, &weapon, &DoomResponse{})
+	res, err = httpClientWeapons.DoWithMarshal(
+		http.MethodPost, &weapon, &DoomResponse{})
 	if err != nil {
 		panic(err)
 	}
@@ -118,7 +118,7 @@ func main() {
 	httpClientRedirect := httpClient.NewChild("/redirect")
 	httpClientRedirect.Options.Follow = true
 	httpClientRedirect.Options.MaxRedirect = 2
-	res, err = httpClientRedirect.Do(methods.GET, nil, nil)
+	res, err = httpClientRedirect.Do(http.MethodGet, nil, nil)
 	if err != nil {
 		panic(err)
 	}
