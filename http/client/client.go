@@ -40,7 +40,6 @@ import (
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 	"gitlab.com/iglou.eu/goulc/http/utils"
 )
 
@@ -78,6 +77,9 @@ var (
 
 	// ErrClientClosed is returned when the client is closed
 	ErrClientClosed = errors.New("http client is closed")
+
+	// ErrEmptyMethod is returned when the HTTP method is empty
+	ErrEmptyMethod = errors.New("request method cannot be empty")
 )
 
 // OptDefault defines secure default options for the client
@@ -312,7 +314,7 @@ func (c *Client) FlushHeader() *Client {
 //
 // Example:
 //
-// client.FlushQuery().Do(methods.GET, nil, nil)
+// client.FlushQuery().Do(http.MethodGet, nil, nil)
 func (c *Client) FlushQuery() *Client {
 	c.logger.Debug("flushing query parameters", "current_query", c.Query)
 
@@ -517,7 +519,7 @@ func (c *Client) Close() error {
 // DoWithMarshal is a convenience function that performs a client.Do() call but
 // with a body Marshaller instance. For nil body, prefer to use Do instead.
 func (main *Client) DoWithMarshal(
-	method methods.Method, body Marshaler, uml Unmarshaler,
+	method string, body Marshaler, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
@@ -553,7 +555,7 @@ func (main *Client) DoWithMarshal(
 //
 // Example:
 //
-//	resp, err := client.Do(methods.GET, nil, &MyResponseType{})
+//	resp, err := client.Do(http.MethodGet, nil, &MyResponseType{})
 //	if err != nil {
 //	    return err
 //	}
@@ -568,7 +570,7 @@ func (main *Client) DoWithMarshal(
 //   - A pointer to a Response containing the HTTP response details.
 //   - An error if the request fails or the client is closed.
 func (main *Client) Do(
-	method methods.Method, body []byte, uml Unmarshaler,
+	method string, body []byte, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
@@ -589,14 +591,7 @@ func (main *Client) Do(
 
 	// Validate input parameters
 	if method == "" {
-		return nil, errors.Join(ErrInvalidMethod,
-			errors.New("method cannot be empty"))
-	}
-
-	// Validate method is supported
-	if !method.IsValid() {
-		return nil, errors.Join(ErrInvalidMethod,
-			errors.New("unsupported method: "+string(method)))
+		return nil, errors.Join(ErrInvalidMethod, ErrEmptyMethod)
 	}
 
 	// Add query to URL

@@ -29,7 +29,6 @@ import (
 	"strings"
 
 	"gitlab.com/iglou.eu/goulc/ascii"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 // DigestAlgo represents the supported hash algorithms for HTTP
@@ -236,8 +235,7 @@ func (d *Digest) Update() error {
 // 1. Computing the response using A1 and A2 values
 // 2. Building the header with all required fields
 // 3. Handling username encoding
-func (d *Digest) Header(
-	method methods.Method, _ *url.URL, body []byte,
+func (d *Digest) Header(method string, _ *url.URL, body []byte,
 ) (string, string, error) {
 	A1 := d.A1()
 	A2 := d.A2(method, body)
@@ -360,7 +358,7 @@ func (d *Digest) A1() string {
 // at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3
 // When using auth-int quality of protection, it includes a hash of
 // the request body. Returns the computed A2 value used in response generation.
-func (d *Digest) A2(method methods.Method, body []byte) string {
+func (d *Digest) A2(method string, body []byte) string {
 	if d.Parameters.QOP == DigestQOPAuthInt {
 		return strings.Join([]string{
 			string(method),

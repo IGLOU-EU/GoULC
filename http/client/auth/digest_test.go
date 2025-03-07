@@ -1,12 +1,12 @@
 package auth_test
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 func TestNewDigest(t *testing.T) {
@@ -313,7 +313,7 @@ func TestDigest_A2(t *testing.T) {
 	tests := []struct {
 		name     string
 		digest   *auth.Digest
-		method   methods.Method
+		method   string
 		body     []byte
 		wantHash bool
 	}{
@@ -325,7 +325,7 @@ func TestDigest_A2(t *testing.T) {
 					URI:       "/dir/index.html",
 				},
 			},
-			method:   methods.GET,
+			method:   http.MethodGet,
 			wantHash: true,
 		},
 		{
@@ -337,7 +337,7 @@ func TestDigest_A2(t *testing.T) {
 					QOP:       "auth-int",
 				},
 			},
-			method:   methods.POST,
+			method:   http.MethodPost,
 			body:     []byte("test body"),
 			wantHash: true,
 		},
@@ -403,7 +403,7 @@ func TestDigest_Header(t *testing.T) {
 	tests := []struct {
 		name       string
 		digest     *auth.Digest
-		method     methods.Method
+		method     string
 		url        *url.URL
 		body       []byte
 		wantHeader string
@@ -423,7 +423,7 @@ func TestDigest_Header(t *testing.T) {
 					UserHash:  false,
 				},
 			},
-			method: methods.GET,
+			method: http.MethodGet,
 			url:    &url.URL{Path: "/dir/index.html"},
 			body:   nil,
 		},
@@ -440,7 +440,7 @@ func TestDigest_Header(t *testing.T) {
 					UserHash:  false,
 				},
 			},
-			method: methods.GET,
+			method: http.MethodGet,
 			url:    &url.URL{Path: "/dir/index.html"},
 			body:   nil,
 		},
@@ -458,7 +458,7 @@ func TestDigest_Header(t *testing.T) {
 					Opaque:    "0a4f113b",
 				},
 			},
-			method: methods.GET,
+			method: http.MethodGet,
 			url:    &url.URL{Path: "/dir/index.html"},
 			body:   nil,
 		},
@@ -478,7 +478,7 @@ func TestDigest_Header(t *testing.T) {
 					UserHash:  false,
 				},
 			},
-			method: methods.GET,
+			method: http.MethodGet,
 			url:    &url.URL{Path: "/dir/index.html"},
 			body:   nil,
 		},
@@ -498,7 +498,7 @@ func TestDigest_Header(t *testing.T) {
 					UserHash:  true,
 				},
 			},
-			method: methods.POST,
+			method: http.MethodPost,
 			url:    &url.URL{Path: "/dir/index.html"},
 			body:   []byte("test body"),
 		},
@@ -514,7 +514,7 @@ func TestDigest_Header(t *testing.T) {
 					UserHash:  false,
 				},
 			},
-			method: methods.GET,
+			method: http.MethodGet,
 			url:    &url.URL{Path: "/test"},
 			body:   nil,
 			utf8:   true,

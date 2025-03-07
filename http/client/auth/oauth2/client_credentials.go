@@ -22,6 +22,7 @@ package oauth2
 import (
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
@@ -29,7 +30,6 @@ import (
 
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 // ClientCredentialsType defines where client credentials are sent,
@@ -121,8 +121,7 @@ func (g *ClientCredentials) Update() error {
 
 // Header provides the authorization header required
 // for authenticated HTTP requests.
-func (g *ClientCredentials) Header(
-	_ methods.Method, _ *url.URL, _ []byte,
+func (g *ClientCredentials) Header(_ string, _ *url.URL, _ []byte,
 ) (string, string, error) {
 	return ClientCredentialsHeaderName,
 		ClientCredentialsHeaderPrefix + g.Token.Token.Value().(string),
@@ -173,7 +172,7 @@ func (g *ClientCredentials) newToken() error {
 
 	// Due to body presense we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
-	res, err := c.Do(methods.POST, []byte(data.Encode()), &Response{})
+	res, err := c.Do(http.MethodPost, []byte(data.Encode()), &Response{})
 	if err != nil {
 		return err
 	}

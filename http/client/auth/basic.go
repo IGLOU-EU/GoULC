@@ -24,7 +24,6 @@ import (
 	"net/url"
 
 	"gitlab.com/iglou.eu/goulc/hided"
-	"gitlab.com/iglou.eu/goulc/http/methods"
 )
 
 const (
@@ -81,8 +80,7 @@ func (b *Basic) Update() error {
 // Header return the Header name and Header line with prefix and base64 value.
 // Basic auth does not require method, url or body to build the header.
 // RFC 2617 §2: https://www.rfc-editor.org/rfc/rfc2617#section-2
-func (b *Basic) Header(
-	_ methods.Method, _ *url.URL, _ []byte,
+func (b *Basic) Header(_ string, _ *url.URL, _ []byte,
 ) (string, string, error) {
 	return BasicHeaderName, BasicValuePrefix +
 		BasicUserPass(b.UserID, b.Password.Value().(string)), nil
