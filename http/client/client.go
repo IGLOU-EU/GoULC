@@ -243,16 +243,17 @@ func (c *Client) NewChild(path string) *Client {
 // and authentication is cloned if it exists.
 func (c *Client) Clone() *Client {
 	c.Mu.RLock()
-	defer c.Mu.RUnlock()
 
 	if c.closed {
+		c.Mu.RUnlock()
 		return &Client{closed: true}
 	}
 
 	clone := &Client{
 		closed:         c.closed,
-		activeRequests: c.activeRequests,
+		activeRequests: 0,
 		logger:         c.logger, // keep original pointer
+		closer:         []func() error{},
 
 		Mu: &sync.RWMutex{},
 		Options: Options{
@@ -277,6 +278,14 @@ func (c *Client) Clone() *Client {
 	if c.Auth != nil {
 		clone.Auth = c.Auth.Clone()
 	}
+
+	c.Mu.RUnlock()
+
+	// Add the new client to the closer list of the parent
+	// This ensure that the child client is closed when the parent is closed
+	c.Mu.Lock()
+	c.closer = append(c.closer, clone.Close)
+	c.Mu.Unlock()
 
 	return clone
 }
@@ -444,12 +453,15 @@ func (c *Client) Close() error {
 		"active_requests", atomic.LoadInt32(&c.activeRequests))
 
 	// Wait for active requests to complete (with timeout)
-	ctx, cancel := context.WithTimeout(c.Options.Context, timeOut*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeOut)
 	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
 		for atomic.LoadInt32(&c.activeRequests) > 0 {
+			c.logger.Error("http client close timed out with active requests",
+				"active_requests", atomic.LoadInt32(&c.activeRequests),
+				"status", atomic.LoadInt32(&c.activeRequests) > 0)
 			time.Sleep(100 * time.Millisecond)
 		}
 		close(done)
@@ -461,7 +473,8 @@ func (c *Client) Close() error {
 		c.logger.Debug("http client closed successfully")
 	case <-ctx.Done():
 		c.logger.Warn("http client close timed out with active requests",
-			"active_requests", atomic.LoadInt32(&c.activeRequests))
+			"active_requests", atomic.LoadInt32(&c.activeRequests),
+			"ctx_err", ctx.Err())
 	}
 
 	// Clean up resources
@@ -472,13 +485,32 @@ func (c *Client) Close() error {
 		c.Options.Cancel()
 	}
 
-	c.logger = nil
 	c.Options = Options{}
 	c.Header = nil
 	c.Auth = nil
 	c.URL = url.URL{}
 	c.Query = nil
 	c.ErrorHistory = nil
+
+	// Close all child clients
+	wg := sync.WaitGroup{}
+	for _, closer := range c.closer {
+		wg.Add(1)
+		go func(closer func() error) {
+			defer wg.Done()
+			if closer == nil {
+				return
+			}
+
+			if err := closer(); err != nil {
+				c.logger.Error("error closing child client", "error", err)
+			}
+		}(closer)
+	}
+	wg.Wait()
+
+	c.closer = nil
+	c.logger = nil
 
 	return nil
 }
@@ -489,16 +521,13 @@ func (main *Client) DoWithMarshal(
 	method methods.Method, body Marshaler, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
-	main.Mu.RLock()
-	if main.closed {
-		main.Mu.RUnlock()
+	if main.isClosed() {
 		return nil, ErrClientClosed
 	}
 
 	// Create a copy of the client to avoid modifying the original
 	// and potential race conditions
-	c := main.Clone()
-	main.Mu.RUnlock()
+	c := main.Clone() // Clone are thread-safe
 
 	if body == nil {
 		return c.Do(method, nil, uml)
@@ -543,16 +572,17 @@ func (main *Client) Do(
 	method methods.Method, body []byte, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
-	main.Mu.RLock()
-	if main.closed {
-		main.Mu.RUnlock()
+	if main.isClosed() {
 		return nil, ErrClientClosed
 	}
 
 	// Create a copy of the client to avoid modifying the original
 	// and potential race conditions
-	c := main.Clone()
-	main.Mu.RUnlock()
+	c := main.Clone() // Clone are thread-safe
+	defer func() {
+		c.Close()
+		c = nil
+	}() // Release resources when done
 
 	// Increment main active requests counter
 	atomic.AddInt32(&main.activeRequests, 1)
@@ -726,4 +756,22 @@ func (main *Client) Do(
 	}
 
 	return res, nil
+}
+
+// isClosed checks if the client is closed.
+// Call Close() if the context is closed but not the client.
+func (c *Client) isClosed() bool {
+	c.Mu.RLock()
+	if c.Options.Context.Err() != nil {
+		c.Mu.RUnlock()
+
+		if !c.closed {
+			c.Close()
+		}
+
+		return true
+	}
+	c.Mu.RUnlock()
+
+	return false
 }
