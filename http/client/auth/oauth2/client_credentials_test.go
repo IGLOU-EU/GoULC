@@ -161,7 +161,6 @@ func TestClientCredentials_Update(t *testing.T) {
 				OnlyHTTPS:        false,
 				DisableTLSVerify: true,
 				Timeout:          time.Duration(1 * time.Minute),
-				Context:          context.Background(),
 			}, nil)
 			if err != nil {
 				t.Fatalf("Failed to create HTTP client: %v", err)
