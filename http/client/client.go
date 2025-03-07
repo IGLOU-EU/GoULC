@@ -159,13 +159,13 @@ func New(ctx context.Context, serverURL string, authenticator auth.Authenticator
 
 	if opt != nil {
 		main.Options = *opt
-
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		main.Options.Context, main.Options.Cancel = context.WithCancel(ctx)
 	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	main.Options.Context, main.Options.Cancel = context.WithCancel(ctx)
 
 	if serverURL == "" {
 		return Client{}, ErrEmptyServerURL
@@ -485,7 +485,9 @@ func (c *Client) Close() error {
 		c.Options.Cancel()
 	}
 
-	c.Options = Options{}
+	c.Options = Options{
+		Context: c.Options.Context, // Keep the closed context
+	}
 	c.Header = nil
 	c.Auth = nil
 	c.URL = url.URL{}
