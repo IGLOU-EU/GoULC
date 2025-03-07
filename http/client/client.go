@@ -92,7 +92,6 @@ var OptDefault = Options{
 	FollowAuth:       false,
 	FollowReferer:    true,
 	MaxRedirect:      2,
-	Context:          context.Background(),
 	Timeout:          35 * time.Second,
 	DisableTLSVerify: false,
 }
@@ -122,51 +121,7 @@ var OptDefault = Options{
 func New(ctx context.Context, serverURL string, authenticator auth.Authenticator, opt *Options, logger *slog.Logger) (Client, error) {
 	var err error
 
-	// Validate input parameters
-	if opt != nil {
-		// Validate timeout
-		if opt.Timeout < 0 {
-			return Client{}, errors.Join(ErrInvalidTimeout,
-				errors.New("timeout must be >= 0, got "+
-					strconv.Itoa(int(opt.Timeout.Seconds()))))
-		}
-
-		// Validate redirect limit
-		if opt.MaxRedirect < 0 {
-			return Client{}, errors.Join(ErrInvalidRedirectLimit,
-				errors.New("redirect limit must be >= 0, got "+
-					strconv.Itoa(opt.MaxRedirect)))
-		}
-
-		// Validate context
-		if opt.Context == nil {
-			return Client{}, ErrNilContext
-		}
-	}
-
-	// Initialize client with default values
-	main := Client{
-		Mu:      &sync.RWMutex{},
-		logger:  slog.Default(),
-		Options: OptDefault,
-		Header:  make(http.Header),
-		Query:   make(url.Values),
-	}
-
-	if logger != nil {
-		main.logger = logger
-	}
-
-	if opt != nil {
-		main.Options = *opt
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	main.Options.Context, main.Options.Cancel = context.WithCancel(ctx)
-
+	// Empty url are not allowed
 	if serverURL == "" {
 		return Client{}, ErrEmptyServerURL
 	}
@@ -183,21 +138,59 @@ func New(ctx context.Context, serverURL string, authenticator auth.Authenticator
 			errors.New("failed to parse URL "+serverURL), err)
 	}
 
-	if main.Options.OnlyHTTPS && parsedURL.Scheme == "http" {
-		main.logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
-		parsedURL.Scheme = "https"
+	// Set default logger and context
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Validate input parameters
+	if opt != nil {
+		// Validate timeout
+		if opt.Timeout < 0 {
+			return Client{}, errors.Join(ErrInvalidTimeout,
+				errors.New("timeout must be >= 0, got "+
+					strconv.Itoa(int(opt.Timeout.Seconds()))))
+		}
+
+		// Validate redirect limit
+		if opt.MaxRedirect < 0 {
+			return Client{}, errors.Join(ErrInvalidRedirectLimit,
+				errors.New("redirect limit must be >= 0, got "+
+					strconv.Itoa(opt.MaxRedirect)))
+		}
+	} else {
+		opt = &OptDefault
+	}
+
+	// Initialize the new client
+	main := Client{
+		Mu:      &sync.RWMutex{},
+		logger:  logger,
+		Options: *opt,
+		Header:  make(http.Header),
+		Query:   make(url.Values),
 	}
 
 	main.URL = *parsedURL
 	main.URL.Path = utils.PathFormatting(main.URL.Path)
+	main.context, main.cancel = context.WithCancel(ctx)
+
+	if authenticator != nil {
+		main.Auth = authenticator
+	}
 
 	if main.Query, err = url.ParseQuery(main.URL.RawQuery); err != nil {
 		return Client{}, errors.Join(ErrInvalidQuery,
 			errors.New("failed to parse query "+main.URL.RawQuery), err)
 	}
 
-	if authenticator != nil {
-		main.Auth = authenticator
+	if main.Options.OnlyHTTPS && parsedURL.Scheme == "http" {
+		main.logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
+		parsedURL.Scheme = "https"
 	}
 
 	return main, nil
@@ -246,7 +239,7 @@ func (c *Client) Clone() *Client {
 
 	if c.closed {
 		c.Mu.RUnlock()
-		return &Client{closed: true}
+		return nil
 	}
 
 	clone := &Client{
@@ -268,12 +261,16 @@ func (c *Client) Clone() *Client {
 		},
 		Header:       c.Header.Clone(),
 		URL:          c.URL,
-		Query:        c.Query,
+		Query:        maps.Clone(c.Query),
 		ErrorHistory: []ErrorHistory{},
 	}
 
-	clone.Options.Context, clone.Options.Cancel = context.WithCancel(
-		c.Options.Context)
+	clone.context, clone.cancel = context.WithCancel(c.context)
+
+	if c.URL.User != nil {
+		user := *c.URL.User
+		clone.URL.User = &user
+	}
 
 	if c.Auth != nil {
 		clone.Auth = c.Auth.Clone()
@@ -419,7 +416,7 @@ func (c *Client) FollowRedirects(trace *[]Redirects) func(req *http.Request, via
 
 		// Apply rate limiting to redirect requests if configured
 		if c.Options.RateLimiter != nil {
-			if err := c.Options.RateLimiter.Wait(c.Options.Context); err != nil {
+			if err := c.Options.RateLimiter.Wait(c.context); err != nil {
 				return err
 			}
 		}
@@ -440,6 +437,11 @@ func (c *Client) Close() error {
 	// Lock temporarily to avoid hanging active requests
 	c.Mu.Lock()
 	if c.closed {
+		// In case the context was not closed
+		if c.cancel != nil {
+			c.cancel()
+		}
+
 		c.Mu.Unlock()
 		return nil
 	}
@@ -459,9 +461,6 @@ func (c *Client) Close() error {
 	done := make(chan struct{})
 	go func() {
 		for atomic.LoadInt32(&c.activeRequests) > 0 {
-			c.logger.Error("http client close timed out with active requests",
-				"active_requests", atomic.LoadInt32(&c.activeRequests),
-				"status", atomic.LoadInt32(&c.activeRequests) > 0)
 			time.Sleep(100 * time.Millisecond)
 		}
 		close(done)
@@ -481,13 +480,11 @@ func (c *Client) Close() error {
 	c.Mu.Lock()
 	defer c.Mu.Unlock()
 
-	if c.Options.Cancel != nil {
-		c.Options.Cancel()
+	if c.cancel != nil {
+		c.cancel()
 	}
 
-	c.Options = Options{
-		Context: c.Options.Context, // Keep the closed context
-	}
+	c.Options = Options{}
 	c.Header = nil
 	c.Auth = nil
 	c.URL = url.URL{}
@@ -523,7 +520,7 @@ func (main *Client) DoWithMarshal(
 	method methods.Method, body Marshaler, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
-	if main.isClosed() {
+	if main.IsClosed() {
 		return nil, ErrClientClosed
 	}
 
@@ -574,7 +571,7 @@ func (main *Client) Do(
 	method methods.Method, body []byte, uml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
-	if main.isClosed() {
+	if main.IsClosed() {
 		return nil, ErrClientClosed
 	}
 
@@ -602,11 +599,6 @@ func (main *Client) Do(
 			errors.New("unsupported method: "+string(method)))
 	}
 
-	// Validate context
-	if c.Options.Context == nil {
-		return nil, ErrNilContext
-	}
-
 	// Add query to URL
 	if len(c.Query) > 0 {
 		c.logger.Debug("encoding query parameters", "query", c.Query)
@@ -618,10 +610,10 @@ func (main *Client) Do(
 	var req *http.Request
 
 	if body != nil {
-		req, err = http.NewRequestWithContext(c.Options.Context,
+		req, err = http.NewRequestWithContext(c.context,
 			string(method), c.URL.String(), bytes.NewReader(body))
 	} else {
-		req, err = http.NewRequestWithContext(c.Options.Context,
+		req, err = http.NewRequestWithContext(c.context,
 			string(method), c.URL.String(), nil)
 	}
 
@@ -656,10 +648,10 @@ func (main *Client) Do(
 	// Initialize redirects tracking
 	redirectsVia := make([]Redirects, 0, 1)
 
-	// Create HTTP client with configured timeout
-	// The client will be further configured for TLS and redirects
+	// Create HTTP client with configured timeout and redirect
 	client := &http.Client{
-		Timeout: c.Options.Timeout,
+		Timeout:       c.Options.Timeout,
+		CheckRedirect: c.FollowRedirects(&redirectsVia),
 	}
 
 	// Configure TLS if needed
@@ -677,13 +669,6 @@ func (main *Client) Do(
 		}
 	}
 
-	// Configure redirect handling with security considerations
-	if c.Options.Follow {
-		client.CheckRedirect = c.FollowRedirects(&redirectsVia)
-	} else {
-		client.CheckRedirect = nil
-	}
-
 	c.logger.Debug("executing HTTP request",
 		"method", req.Method,
 		"url", req.URL.String(),
@@ -693,7 +678,7 @@ func (main *Client) Do(
 
 	// Apply rate limiting to request
 	if c.Options.RateLimiter != nil {
-		if err := c.Options.RateLimiter.Wait(c.Options.Context); err != nil {
+		if err := c.Options.RateLimiter.Wait(c.context); err != nil {
 			return nil, err
 		}
 	}
@@ -760,20 +745,29 @@ func (main *Client) Do(
 	return res, nil
 }
 
-// isClosed checks if the client is closed.
-// Call Close() if the context is closed but not the client.
-func (c *Client) isClosed() bool {
+// IsClosed checks if the client is closed.
+// Call Close() if the context is closed but not the client,
+// or if the client is closed but not the context.
+func (c *Client) IsClosed() bool {
 	c.Mu.RLock()
-	if c.Options.Context.Err() != nil {
+
+	if c.context.Err() != nil {
 		c.Mu.RUnlock()
 
 		if !c.closed {
-			c.Close()
+			c.Close() // Ctx closed but Client open
 		}
 
 		return true
 	}
-	c.Mu.RUnlock()
 
+	if c.closed {
+		c.Mu.RUnlock()
+
+		c.Close() // Client closed but ctx open
+		return true
+	}
+
+	c.Mu.RUnlock()
 	return false
 }

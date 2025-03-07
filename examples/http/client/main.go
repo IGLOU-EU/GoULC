@@ -32,12 +32,11 @@ func main() {
 
 	opt := client.Options{
 		OnlyHTTPS: false,
-		Context:   ctx,
 		Timeout:   time.Second * 5,
 	}
 
 	// Create an HTTP client without authentication
-	httpClient, err := client.New(context.Background(), ts.URL, nil, &opt, slog.Default())
+	httpClient, err := client.New(ctx, ts.URL, nil, &opt, slog.Default())
 	if err != nil {
 		panic(err)
 	}

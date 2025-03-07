@@ -71,14 +71,6 @@ type Options struct {
 	// Default: 2
 	MaxRedirect int
 
-	// Context allows for request cancellation.
-	// Default: context.Background()
-	Context context.Context
-
-	// Cancel sets a function to call when a request is canceled.
-	// Default: nil
-	Cancel context.CancelFunc
-
 	// Timeout sets the maximum duration for the entire request.
 	// Default: 35s
 	Timeout time.Duration
@@ -99,7 +91,10 @@ type Client struct {
 	closed         bool
 	activeRequests int32
 	logger         *slog.Logger
-	closer         []func() error
+
+	closer  []func() error
+	context context.Context
+	cancel  context.CancelFunc
 
 	// Mu is the mutex to lock when accessing or modifying the client
 	// It's used to ensure thread-safety
