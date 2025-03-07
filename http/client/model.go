@@ -99,6 +99,7 @@ type Client struct {
 	closed         bool
 	activeRequests int32
 	logger         *slog.Logger
+	closer         []func() error
 
 	// Mu is the mutex to lock when accessing or modifying the client
 	// It's used to ensure thread-safety
