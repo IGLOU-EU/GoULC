@@ -141,6 +141,6 @@ func TestDurationToTimeDuration(t *testing.T) {
 	}
 
 	if &d.Duration == &got {
-		t.Errorf("Got value is suposed to be a copy of the original duration. Pointer to original value is %v, pointer to got value is %v", &d.Duration, &got)
+		t.Errorf("Got value is supposed to be a copy of the original duration. Pointer to original value is %v, pointer to got value is %v", &d.Duration, &got)
 	}
 }

@@ -307,7 +307,7 @@ func TestClient_Do(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:       "successfull with URL query",
+			name:       "successful with URL query",
 			path:       "/prophecy",
 			method:     http.MethodGet,
 			query:      [2]string{"bhaalspawn", "child of murder"},

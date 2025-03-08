@@ -170,7 +170,7 @@ func (g *ClientCredentials) newToken() error {
 	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
 	c.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	// Due to body presense we need to use a POST type
+	// Due to body presence we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
 	res, err := c.Do(http.MethodPost, []byte(data.Encode()), &Response{})
 	if err != nil {

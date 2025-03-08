@@ -90,7 +90,7 @@ func main() {
 	fmt.Printf("\nTest #04: And we are authenticated, the door open\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #05 Post request to /weapons
-	// We whant to take a powerfull weapon, to do this, we need to send a JSON body
+	// We want to take a powerful weapon, to do this, we need to send JSON body
 	// But, who want to write and manage mashalization for every request ?!
 	// Not me, so we will use the client.Marshaler interface with DoWithMarshal
 
