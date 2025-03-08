@@ -234,6 +234,7 @@ func TestClient_NewChild(t *testing.T) {
 	}
 }
 
+//gocyclo:ignore
 func TestClient_Do(t *testing.T) {
 	// Create test server
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -670,6 +671,7 @@ func TestClient_DoWithMarshal(t *testing.T) {
 	}
 }
 
+//gocyclo:ignore
 func TestClient_FollowRedirects(t *testing.T) {
 	const (
 		baseURL     = "https://new-reno.wasteland"

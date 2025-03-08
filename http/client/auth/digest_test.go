@@ -399,6 +399,7 @@ func TestDigest_Response(t *testing.T) {
 	}
 }
 
+//gocyclo:ignore
 func TestDigest_Header(t *testing.T) {
 	tests := []struct {
 		name       string
