@@ -6,7 +6,9 @@ stages:
 unit_test:
   stage: test
   script:
-    - go test -v -tags=gorm,x ./...
+    - go test -v -tags=gorm,x -coverprofile=coverage.out -covermode=atomic -race $(go list ./... | grep -v /examples/)
+    - go tool cover -func=coverage.out | grep ^total
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+%)/'
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

@@ -3,6 +3,7 @@
 [![Matrix](https://img.shields.io/matrix/iglou.eu%3Amatrix.org?logo=matrix&color=yellow)](https://matrix.to/#/#iglou.eu:matrix.org)
 [![Go Report Card](https://goreportcard.com/badge/gitlab.com/iglou.eu/goulc)](https://goreportcard.com/report/gitlab.com/iglou.eu/goulc)
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc)
+[![coverage](https://gitlab.com/iglou.eu/goulc/badges/main/coverage.svg?job=unit_test)](#)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 GoULC (pronounced as one word) is a collection of Go libraries I developed for my professional and personal usage. Born out of the desire to reduce cascading and/or redundant dependencies across projects, GoULC focuses on lightweight implementations while leveraging Go's standard library whenever possible. While primarily designed for my own use cases, feel free to use it if it fits your needs! 😊
