@@ -1,14 +1,37 @@
-image: golang:1.23.4
+image: golang:latest
 
 stages:
-  - test
+  - linter
+  - testing
 
-unit_test:
-  stage: test
+linter:
+  stage: linter
   script:
-    - go test -v -tags=gorm,x -coverprofile=coverage.out -covermode=atomic -race $(go list ./... | grep -v /examples/)
-    - go tool cover -func=coverage.out | grep ^total
-  coverage: '/total:\s+\(statements\)\s+(\d+.\d+%)/'
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    - golangci-lint run --print-issued-lines=false --out-format line-number
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+unit_test:
+  stage: testing
+  script:
+    - go test -v -tags=gorm,x -coverprofile=coverage.out -covermode=atomic -race $(go list ./... | grep -v /examples/)
+  artifacts:
+    paths:
+      - coverage.out
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+coverage_report:
+  stage: testing
+  dependencies:
+    - unit_test
+  script:
+    - go tool cover -func=coverage.out | grep ^total
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+%)/'
+  artifacts:
+    paths:
+      - coverage.out
+  rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
