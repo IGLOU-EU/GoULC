@@ -633,6 +633,11 @@ func (main *Client) Do(
 	if c.Auth != nil {
 		c.logger.Debug("adding authentication header",
 			"auth_name", c.Auth.Name())
+
+		if err := c.Auth.Update(); err != nil {
+			return nil, err
+		}
+
 		name, value, err := c.Auth.Header(method, req.URL, body)
 		if err != nil {
 			return nil, err
