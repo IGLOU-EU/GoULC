@@ -29,6 +29,9 @@ type Hider interface {
 	// String returns the obfuscated string (expected output: "***")
 	fmt.Stringer
 
+	// IsEmpty returns true if the underlying value is empty
+	IsEmpty() bool
+
 	// HashMD5 returns an MD5 hashed representation for obfuscation comparison
 	// Note: MD5 is used only for obfuscation, not for cryptographic security
 	HashMD5() string

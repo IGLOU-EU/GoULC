@@ -32,6 +32,11 @@ func (_ String) String() string {
 	return "***"
 }
 
+// IsEmpty returns true if the underlying string is empty
+func (s String) IsEmpty() bool {
+	return string(s) == ""
+}
+
 // HashMD5 returns an MD5 hash of the string for obfuscation comparison
 // Note: MD5 is used solely for obfuscation, not for security
 func (s String) HashMD5() string {
