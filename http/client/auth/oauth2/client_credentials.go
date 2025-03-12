@@ -24,7 +24,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
-	"reflect"
 	"strings"
 	"time"
 
@@ -32,6 +31,21 @@ import (
 
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
+)
+
+var (
+	// ErrorUnexpectedStatusCode is returned when the authorization server
+	// returns a non-200 status code.
+	ErrorUnexpectedStatusCode = errors.New(
+		"The authorization server as returned an unexpected status code")
+	// ErrorEmptyBody is returned when the authorization server returns an
+	// empty body doesn't contain the expected token.
+	ErrorEmptyBody = errors.New(
+		"The authorization server as returned an empty body")
+	// ErrorNoToken is returned when the authorization server returns a
+	// response without a token.
+	ErrorBodyUnmarshaler = errors.New(
+		"The authorization server as returned a response without a token")
 )
 
 // ClientCredentialsType defines where client credentials are sent,
@@ -146,6 +160,8 @@ func (g *ClientCredentials) Clone() auth.Authenticator {
 // newToken requests a new access token from the authorization server
 // using client credentials.
 func (g *ClientCredentials) newToken() error {
+	var tokenResp Response
+
 	// New request to Auth
 	c := g.http.NewChild(g.Config.Endpoint.Auth)
 
@@ -173,7 +189,7 @@ func (g *ClientCredentials) newToken() error {
 
 	// Due to body presence we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
-	res, err := c.Do(net_http.MethodPost, []byte(data.Encode()), &Response{})
+	res, err := c.Do(net_http.MethodPost, []byte(data.Encode()), &tokenResp)
 	if err != nil {
 		return err
 	}
@@ -183,27 +199,24 @@ func (g *ClientCredentials) newToken() error {
 		g.log.Debug("Unexpected server response",
 			"code", res.Status,
 			"body", res.Body)
-		return errors.New(
-			"The authorization server as returned an unexpected status code")
+		return ErrorUnexpectedStatusCode
 	}
 
+	// Check the body size
 	if len(res.Body) == 0 {
-		return errors.New("The authorization server as returned an empty body")
+		return ErrorEmptyBody
 	}
 
-	// Check the type insert
-	tokRes, ok := res.BodyUml.(*Response)
-	if !ok {
-		g.log.Debug("Type insertion issue",
-			"type", reflect.TypeOf(res.BodyUml),
-			"content", res.BodyUml)
-
-		return errors.New(
-			"The body unmarshaler does not match with the oauth2.Response declaration")
+	// Check if the body contains the expected token
+	if tokenResp.Token.IsEmpty() {
+		g.log.Debug("No token found in the response",
+			"unmarshaler", tokenResp,
+			"raw", string(res.Body))
+		return ErrorBodyUnmarshaler
 	}
 
 	// Feed the token !
-	g.Token = tokRes.TokenResponse
+	g.Token = tokenResp.TokenResponse
 	g.Token.ExpireAt = time.Now().Add(g.Token.ExpiresIn.Duration)
 
 	return nil
