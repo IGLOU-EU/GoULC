@@ -25,11 +25,12 @@ unit_test:
 
 coverage_report:
   stage: testing
-  dependencies:
-    - unit_test
+  needs:
+    - job: unit_test
+      artifacts: true
   script:
     - go tool cover -func=coverage.out | grep ^total
-  coverage: '/total:\s+\(statements\)\s+(\d+.\d+%)/'
+  coverage: '/total:\s+\(statements\)\s+(\d+.?\d?%)/'
   artifacts:
     paths:
       - coverage.out
