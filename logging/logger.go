@@ -41,7 +41,8 @@ var DefaultWriter = &model.Writer{Out: os.Stdout, Err: os.Stderr}
 // - Level: "INFO" (only INFO and above are logged)
 // - Colored: false (no ANSI colors in output)
 // - AddSource: true (includes source file and line information)
-var DefaultConfig = &model.Config{Level: "INFO", Colored: false, AddSource: true}
+var DefaultConfig = &model.Config{
+	Level: "INFO", Colored: false, AddSource: true}
 
 // New is a constructor for the Logger type.
 // Same as NewWithWriter with the default writer.
@@ -58,7 +59,9 @@ func New(basePath string, cfg *model.Config) (*slog.Logger, error) {
 // case of writer.Out is nil and use writer.Out as writer.Err if it is nil.
 //
 // The cfg use the default configuration if nil
-func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*slog.Logger, error) {
+func NewWithWriter(
+	basePath string, writer *model.Writer, cfg *model.Config,
+) (*slog.Logger, error) {
 	if writer == nil {
 		writer = DefaultWriter
 	}
@@ -97,7 +100,8 @@ func NewWithWriter(basePath string, writer *model.Writer, cfg *model.Config) (*s
 
 // Critical logs a critical error message along with any provided attributes,
 // prints the stack trace, and then terminates the program with exit code 1.
-// The function accepts a Logger instance, a message string, and optional attributes.
+// The function accepts a Logger instance, a message string,
+// and optional attributes.
 func Critical(l *slog.Logger, msg string, attrs ...any) {
 	l.With(attrs...).Error(
 		"Critical error",
@@ -107,6 +111,8 @@ func Critical(l *slog.Logger, msg string, attrs ...any) {
 
 	logging, ok := l.Handler().(*Handler)
 	if !ok || !logging.Cancel() {
+		//nolint:revive
+		// This is an urgency exit and can be ignored by the linter
 		os.Exit(1)
 	}
 }

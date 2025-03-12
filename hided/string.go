@@ -28,7 +28,7 @@ import (
 type String string
 
 // String implements fmt.Stringer to return an obfuscated string
-func (s String) String() string {
+func (_ String) String() string {
 	return "***"
 }
 

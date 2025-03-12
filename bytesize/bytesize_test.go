@@ -16,7 +16,6 @@ func TestByteSize_ArrayLiteral(t *testing.T) {
 			bytesize.ByteValueIEC,
 		)
 	}
-
 }
 
 func Test_Parse(t *testing.T) {

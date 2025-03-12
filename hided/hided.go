@@ -18,7 +18,8 @@
  */
 
 // Package hided provides types and methods to obfuscate or mask sensitive data
-// It can be used to ensure that sensitive information is not exposed in logs or any outputs
+// It can be used to ensure that sensitive information is not exposed in logs
+// or any outputs
 package hided
 
 import "fmt"

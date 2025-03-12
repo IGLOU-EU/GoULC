@@ -67,13 +67,13 @@ func NewBasic(userID string, password hided.String) (Basic, error) {
 }
 
 // Name returns the identifier for this authentication method.
-func (b *Basic) Name() string {
+func (_ *Basic) Name() string {
 	return BasicName
 }
 
 // Update implements the Authenticator interface.
 // This method is a no-op as there is no state to update.
-func (b *Basic) Update() error {
+func (_ *Basic) Update() error {
 	return nil
 }
 
@@ -81,7 +81,7 @@ func (b *Basic) Update() error {
 // Basic auth does not require method, url or body to build the header.
 // RFC 2617 §2: https://www.rfc-editor.org/rfc/rfc2617#section-2
 func (b *Basic) Header(_ string, _ *url.URL, _ []byte,
-) (string, string, error) {
+) (headerKey, headerValue string, err error) {
 	return BasicHeaderName, BasicValuePrefix +
 		BasicUserPass(b.UserID, b.Password.Value().(string)), nil
 }

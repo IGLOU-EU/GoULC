@@ -37,29 +37,31 @@ type GormLogger struct {
 	*slog.Logger
 }
 
-func NewGormLogger(logger *slog.Logger) *GormLogger {
+func NewGormLogger(log *slog.Logger) *GormLogger {
 	return &GormLogger{
-		logger,
+		log,
 	}
 }
 
-func (g *GormLogger) LogMode(logger.LogLevel) logger.Interface {
+func (_ *GormLogger) LogMode(_ logger.LogLevel) logger.Interface {
 	return nil
 }
 
-func (g *GormLogger) Info(ctx context.Context, msg string, data ...interface{}) {
+func (g *GormLogger) Info(ctx context.Context, msg string, data ...any) {
 	g.InfoContext(ctx, "Database", "message", msg, "data", data)
 }
 
-func (g *GormLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
+func (g *GormLogger) Warn(ctx context.Context, msg string, data ...any) {
 	g.WarnContext(ctx, "Database", "message", msg, "data", data)
 }
 
-func (g *GormLogger) Error(ctx context.Context, msg string, data ...interface{}) {
+func (g *GormLogger) Error(ctx context.Context, msg string, data ...any) {
 	g.ErrorContext(ctx, "Database", "message", msg, "data", data)
 }
 
-func (g *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+func (g *GormLogger) Trace(
+	ctx context.Context, begin time.Time, fc func() (string, int64), err error,
+) {
 	sql, rows := fc()
 	elapsed := time.Since(begin)
 
@@ -68,17 +70,21 @@ func (g *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 		msg = err.Error()
 
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			g.ErrorContext(ctx, msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
+			g.ErrorContext(ctx,
+				msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
 			return
 		}
 	}
 
-	g.DebugContext(ctx, msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
+	g.DebugContext(ctx,
+		msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
 }
 
 // ParamsFilter implements gorm.ParamsFilter interface, it iterates through
 // params and applies Hiding() when there is an hided.GormHider sensitive values
-func (g *GormLogger) ParamsFilter(ctx context.Context, sql string, params ...interface{}) (string, []interface{}) {
+func (_ *GormLogger) ParamsFilter(
+	_ context.Context, sql string, params ...any,
+) (string, []any) {
 	for i := range params {
 		if sensitive, ok := params[i].(hided.GormHider); ok {
 			params[i] = sensitive.Hiding()

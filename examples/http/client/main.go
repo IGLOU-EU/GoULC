@@ -103,14 +103,18 @@ func main() {
 		Power:  9000,
 	}
 
-	// And now, we can make the request with marshalling
+	// Create a new DoomResponse
+	doomResp := new(DoomResponse)
+
+	// And now, we can make the request with marshalling. Unlike previous
+	// examples, we use an existing DoomResponse variable. This is more
+	// convenient and avoid type-assertion stuff
 	res, err = httpClientWeapons.DoWithMarshal(
-		http.MethodPost, &weapon, &DoomResponse{})
+		http.MethodPost, &weapon, doomResp)
 	if err != nil {
 		panic(err)
 	}
 
-	doomRes = res.BodyUml.(*DoomResponse)
 	fmt.Printf("\nTest #05: And we have now a BFG, let's ROCK !\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #06 into the response, you can see some metrics
@@ -126,11 +130,12 @@ func main() {
 	fmt.Printf("\nTest #06: Look there metrics in your face.\nStatus: %v\nResponseTime: %v\nTrace: %#v\nErrorRate: %v%%\n", res.Status, res.ResponseTime, res.Trace, res.ErrorRate)
 
 	// #07 Close the client
-	// To release clients resources, you need to call Close() method, that will release
-	// all resources used by the client and its children in cascade
+	// To release clients resources, you need to call Close() method, that will
+	// release all resources used by the client and its children in cascade
 	//
-	// The main ctx close, are used to cancel request with the http.NewRequestWithContext
-	// At the next Do/DoWithMarshal, the client will be closed automatically if not closed manually
+	// The main ctx close, are used to cancel request with the http.
+	// NewRequestWithContext At the next Do/DoWithMarshal, the client will be
+	// closed automatically if not closed manually
 	err = httpClient.Close()
 	if err != nil {
 		panic(err)
@@ -157,7 +162,7 @@ func (d *DoomResponse) Name() string {
 
 // To keep the demo simple, we only unmarshal json, but you can unmarshal
 // anything you want with any required processing
-func (d *DoomResponse) Unmarshal(statusCode int, _ http.Header, body []byte) error {
+func (d *DoomResponse) Unmarshal(_ int, _ http.Header, body []byte) error {
 	return json.Unmarshal(body, d)
 }
 

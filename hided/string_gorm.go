@@ -32,19 +32,19 @@ type GormString string
 
 // GormValue implements gorm.Valuer to safely pass string data to gorm, you
 // need to implement gorm.ParamsFilter to keep value secret into your logger
-func (s String) GormValue(ctx context.Context, db *gorm.DB) clause.Expr {
+func (s String) GormValue(_ context.Context, _ *gorm.DB) clause.Expr {
 	return clause.Expr{
 		SQL:  "?",
-		Vars: []interface{}{GormString(s)},
+		Vars: []any{GormString(s)},
 	}
 }
 
 // String is the Stringer, it returns a clear string representation
-func (s GormString) String() string {
-	return string(s)
+func (g GormString) String() string {
+	return string(g)
 }
 
 // Hiding is to return an obfuscated string
-func (s GormString) Hiding() string {
+func (_ GormString) Hiding() string {
 	return "***"
 }

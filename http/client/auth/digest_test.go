@@ -148,7 +148,7 @@ func TestDigest_Name(t *testing.T) {
 }
 
 // TestBasic_Update juste for coverage...
-func TestDigest_Update(t *testing.T) {
+func TestDigest_Update(_ *testing.T) {
 	d := &auth.Digest{}
 	_ = d.Update()
 }
@@ -201,7 +201,7 @@ func TestDigestParameters_Hash(t *testing.T) {
 		},
 		{
 			name:      "MD5-SESS",
-			algorithm: auth.DigestMD5_SESS,
+			algorithm: auth.DigestMD5SESS,
 			wantLen:   32,
 		},
 		{
@@ -211,7 +211,7 @@ func TestDigestParameters_Hash(t *testing.T) {
 		},
 		{
 			name:      "SHA-256-SESS",
-			algorithm: auth.DigestSHA256_SESS,
+			algorithm: auth.DigestSHA256SESS,
 			wantLen:   64,
 		},
 		{
@@ -221,7 +221,7 @@ func TestDigestParameters_Hash(t *testing.T) {
 		},
 		{
 			name:      "SHA-512-SESS",
-			algorithm: auth.DigestSHA512_SESS,
+			algorithm: auth.DigestSHA512SESS,
 			wantLen:   128,
 		},
 		{
@@ -231,7 +231,7 @@ func TestDigestParameters_Hash(t *testing.T) {
 		},
 		{
 			name:      "SHA-512-256-SESS",
-			algorithm: auth.DigestSHA512256_SESS,
+			algorithm: auth.DigestSHA512256SESS,
 			wantLen:   64,
 		},
 		{
@@ -276,7 +276,7 @@ func TestDigest_A1(t *testing.T) {
 				Username: "Mufasa",
 				Password: "Circle of Life",
 				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestMD5_SESS,
+					Algorithm: auth.DigestMD5SESS,
 					Realm:     "testrealm@host.com",
 					Nonce:     "nonce",
 					CNonce:    "cnonce",
@@ -434,7 +434,7 @@ func TestDigest_Header(t *testing.T) {
 				Username: "Mufasa",
 				Password: "Circle of Life",
 				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256_SESS,
+					Algorithm: auth.DigestSHA256SESS,
 					Realm:     "testrealm@host.com",
 					URI:       "/dir/index.html",
 					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",

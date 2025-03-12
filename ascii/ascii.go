@@ -40,7 +40,8 @@ func Is(s string) bool {
 	return true
 }
 
-// IsPrintable reports whether s contains only printable ASCII characters (32-127).
+// IsPrintable reports whether s contains only printable ASCII characters
+// (32-127).
 func IsPrintable(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < printableBegin || s[i]&printableEnd != 0 {

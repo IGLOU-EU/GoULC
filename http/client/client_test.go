@@ -31,7 +31,9 @@ type mockAuthenticator struct {
 
 func (m *mockAuthenticator) Name() string  { return m.name }
 func (m *mockAuthenticator) Update() error { m.updated = true; return nil }
-func (m *mockAuthenticator) Header(_ string, _ *url.URL, _ []byte) (string, string, error) {
+func (m *mockAuthenticator) Header(
+	_ string, _ *url.URL, _ []byte,
+) (headerKey, headerValue string, err error) {
 	if m.wantErr {
 		return "", "", auth.ErrNoUserID
 	}
@@ -53,7 +55,7 @@ type mockResponse struct {
 	Message string `json:"message"`
 }
 
-func (m *mockResponse) Name() string { return "mockResponse" }
+func (_ *mockResponse) Name() string { return "mockResponse" }
 func (m *mockResponse) Unmarshal(_ int, _ http.Header, body []byte) error {
 	return json.Unmarshal(body, m)
 }
@@ -165,10 +167,12 @@ func TestNew(t *testing.T) {
 					return
 				}
 			}
-			if !tt.wantErr {
-				if c.Auth != tt.auth {
-					t.Errorf("New() auth = %v, want %v", c.Auth, tt.auth)
-				}
+			if tt.wantErr {
+				return
+			}
+
+			if c.Auth != tt.auth {
+				t.Errorf("New() auth = %v, want %v", c.Auth, tt.auth)
 			}
 		})
 	}
@@ -209,12 +213,12 @@ func TestClient_NewChild(t *testing.T) {
 	}
 
 	// Test with authenticator
-	auth := &mockAuthenticator{
+	authMock := &mockAuthenticator{
 		name:   "pip-boy",
 		header: "Authorization",
 		value:  "Vault-Tec clearance",
 	}
-	parentWithAuth, _ := client.New(context.Background(), "https://vault13.wasteland", auth, nil, nil)
+	parentWithAuth, _ := client.New(context.Background(), "https://vault13.wasteland", authMock, nil, nil)
 	childWithAuth := parentWithAuth.NewChild("")
 
 	if childWithAuth.Auth == nil {
@@ -241,7 +245,7 @@ func TestClient_Do(t *testing.T) {
 		switch r.URL.Path {
 		case "/temple":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"message": "Go, friend, and may Gorion watch over your path"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Go, friend, and may Gorion watch over your path"})
 		case "/sarevok":
 			w.WriteHeader(http.StatusInternalServerError)
 		case "/portal":
@@ -365,24 +369,23 @@ func TestClient_Do(t *testing.T) {
 			}
 
 			resp, err := child.Do(tt.method, tt.body, tt.response)
-			if tt.wantErr {
-				if err == nil {
-					if resp != nil && resp.StatusCode >= 400 {
-						// Consider HTTP error status codes as errors for test purposes
-						err = errors.New("HTTP error status codes as errors")
-					} else {
-						t.Errorf("Do() expected error but got nil")
-						return
-					}
-				}
-				if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
-					t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
-					return
-				}
-			} else if err != nil {
+			if !tt.wantErr && err != nil {
 				t.Errorf("Do() unexpected error = %v", err)
 				return
 			}
+			if err == nil {
+				if resp == nil && resp.StatusCode < 400 {
+					t.Errorf("Do() expected error but got nil")
+					return
+				}
+				// Consider HTTP error status codes as errors for test purposes
+				err = errors.New("HTTP error status codes as errors")
+			}
+			if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
+				t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
+				return
+			}
+
 			if !tt.wantErr && resp != nil && resp.StatusCode != tt.wantStatus {
 				t.Errorf("Do() status = %v, want %v\n%#v", resp.StatusCode, tt.wantStatus, resp.Header)
 			}
@@ -466,7 +469,7 @@ func TestClient_Do(t *testing.T) {
 func TestClient_Close(t *testing.T) {
 	opt := client.OptDefault
 	opt.Timeout = 2 * time.Second
-	main, err := client.New(nil, "https://vault13.wasteland", nil, &opt, nil)
+	main, err := client.New(context.TODO(), "https://vault13.wasteland", nil, &opt, nil)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -525,7 +528,7 @@ func TestClient_FlushQuery(t *testing.T) {
 }
 
 func TestClient_Clone(t *testing.T) {
-	auth := &mockAuthenticator{
+	authMock := &mockAuthenticator{
 		name:   "pip-boy",
 		header: "Authorization",
 		value:  "Vault-Tec clearance",
@@ -540,7 +543,7 @@ func TestClient_Clone(t *testing.T) {
 		DisableTLSVerify: true,
 	}
 
-	c, err := client.New(context.Background(), "https://candlekeep.faerun", auth, &opt, nil)
+	c, err := client.New(context.Background(), "https://candlekeep.faerun", authMock, &opt, nil)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -596,9 +599,9 @@ type testMarshaler struct {
 	Message string `json:"message"`
 }
 
-func (m *testMarshaler) Name() string { return "testMarshaler" }
+func (_ *testMarshaler) Name() string { return "testMarshaler" }
 
-func (m *testMarshaler) ContentType() string {
+func (_ *testMarshaler) ContentType() string {
 	return "application/json"
 }
 
@@ -608,9 +611,9 @@ func (m *testMarshaler) Marshal() ([]byte, error) {
 
 func TestClient_DoWithMarshal(t *testing.T) {
 	// Create test server
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"message": "Welcome to New Reno, traveler"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Welcome to New Reno, traveler"})
 	}))
 	defer ts.Close()
 
@@ -838,11 +841,12 @@ func TestClient_FollowRedirects(t *testing.T) {
 			}
 
 			// Verify auth header
-			if tt.addAuthHeader {
-				gotAuth := req.Header.Get("Authorization")
-				if gotAuth != tt.expectedAuth {
-					t.Errorf("Authorization header = %q, want %q", gotAuth, tt.expectedAuth)
-				}
+			if !tt.addAuthHeader {
+				return
+			}
+			gotAuth := req.Header.Get("Authorization")
+			if gotAuth != tt.expectedAuth {
+				t.Errorf("Authorization header = %q, want %q", gotAuth, tt.expectedAuth)
 			}
 		})
 	}

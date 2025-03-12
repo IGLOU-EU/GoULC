@@ -17,10 +17,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-// Package bytesize provides functionality for handling byte size values using IEC binary units (powers of 1024).
-// It offers parsing, formatting, and arithmetic operations for byte sizes from Bytes up to Pebibytes.
+// Package bytesize provides functionality for handling byte size values using
+// IEC binary units (powers of 1024). It offers parsing, formatting, and
+// arithmetic operations for byte sizes from Bytes up to Pebibytes.
 //
-// The package focuses on IEC binary units (KiB, MiB, etc.) rather than SI decimal units (KB, MB, etc.)
+// The package focuses on IEC binary units (KiB, MiB, etc.)
+// rather than SI decimal units (KB, MB, etc.)
 // to avoid ambiguity in size representations. It supports:
 //   - Parsing size strings with units (e.g., "42.5MiB", "1.2GiB")
 //   - Converting between different units
@@ -35,7 +37,9 @@ import (
 	"strconv"
 )
 
-// Size represents a byte size value with both truncated integer and exact floating-point representations and stores the IEC string representation of the size.
+// Size represents a byte size value with both truncated integer and exact
+// floating-point representations and stores the IEC string representation of
+// the size.
 type Size struct {
 	// t holds the size as a truncated int64 value in bytes.
 	// Truncation is toward zero without rounding to avoid potential overflows
@@ -78,10 +82,15 @@ const (
 	ErrNoValue         = "No numeric value found in the given string"
 	ErrInvalidIEC      = "Invalid IEC unit symbol in Size string"
 	ErrIntegerOverflow = "Size value is too large to be represented as an int64"
+
+	percent  = 100
+	bitSize  = 64
+	exponent = 10
 )
 
-// ByteValueIEC contains the byte values for each IEC binary unit in ascending order.
-// This slice is used internally for unit conversion and formatting.
+// ByteValueIEC contains the byte values for each IEC binary unit in
+// ascending order. This slice is used internally for unit conversion
+// and formatting.
 var ByteValueIEC = [...]int64{
 	Byte,
 	Kibi,
@@ -91,8 +100,9 @@ var ByteValueIEC = [...]int64{
 	Pebi,
 }
 
-// ByteSymbolIEC contains the string symbols for each IEC binary unit in ascending order.
-// The index of each symbol corresponds to the same index in ByteValueIEC.
+// ByteSymbolIEC contains the string symbols for each IEC binary unit
+// in ascending order. The index of each symbol corresponds to the same
+// index in ByteValueIEC.
 var ByteSymbolIEC = [...]string{
 	ByteSymbol,
 	KibiSymbol,
@@ -102,13 +112,17 @@ var ByteSymbolIEC = [...]string{
 	PebiSymbol,
 }
 
-// Parse parses a string representation of a byte size with IEC binary units and returns its components.
+// Parse parses a string representation of a byte size with IEC binary units
+// and returns its components.
+//
 // It accepts strings in the format "NUMBER[UNIT]" where:
 //   - number can be an integer, floating-point, or negative value
 //   - unit is an optional IEC binary unit (B, KiB, MiB, GiB, TiB, PiB)
 //
 // Truncated value are simple truncation toward zero with no rounding.
-//   - We don't want to risk an overflow by rounding to the nearest value (-2.5 => -2, 2.5 => 3) or flooring to the nearest negative value (-2.5 => -3, 2.5 => 2).
+//   - We don't want to risk an overflow by rounding to the nearest value
+//     (-2.5 => -2, 2.5 => 3) or flooring to the nearest negative value
+//     (-2.5 => -3, 2.5 => 2).
 //   - We "can't" use partial byte like "1.5 Bytes = 8 bits + 4 bits",
 //
 // that require to set an arbitrary Byte width, which is most likely not what
@@ -126,9 +140,12 @@ var ByteSymbolIEC = [...]string{
 //	Parse("1024") returns (1024, 1024.0, "1KiB", nil)
 //	Parse("-2.5KiB") returns (-2560, -2560.0, "-2.5KiB", nil)
 //
-// If a short unit symbol is used (e.g., "M" instead of "MiB"), it is automatically
-// converted to the canonical IEC to avoid ambiguity with SI decimal units.
-func Parse(s string) (truncated int64, fractional float64, representation string, err error) {
+// If a short unit symbol is used (e.g., "M" instead of "MiB"),
+// it is automatically converted to the canonical IEC to avoid ambiguity
+// with SI decimal units.
+func Parse(s string) (
+	truncated int64, fractional float64, representation string, err error,
+) {
 	if s == "" {
 		return 0, 0, "", errors.New(ErrEmptyString)
 	}
@@ -141,10 +158,12 @@ func Parse(s string) (truncated int64, fractional float64, representation string
 	// To split the size and the symbol (if any)
 	runePos := -1
 	for i := range s {
-		if s[i] >= 'G' && s[i] <= 'Z' {
-			runePos = i
-			break
+		if s[i] < 'G' || s[i] > 'Z' {
+			continue
 		}
+
+		runePos = i
+		break
 	}
 
 	// Set raw values for size and symbol
@@ -161,7 +180,7 @@ func Parse(s string) (truncated int64, fractional float64, representation string
 	}
 
 	// Convert the string size to a float
-	size, err := strconv.ParseFloat(sizeRaw, 64)
+	size, err := strconv.ParseFloat(sizeRaw, bitSize)
 	if err != nil {
 		return 0, 0, "", err
 	}
@@ -210,13 +229,14 @@ func ToString(b float64) string {
 	if exponent == 0 {
 		value = math.Round(b)
 	} else {
-		value = math.Round((b/float64(ByteValueIEC[exponent]))*100) / 100
+		value = math.Round(
+			(b/float64(ByteValueIEC[exponent]))*percent) / percent
 	}
 
 	return negative +
 		strconv.FormatFloat(
 			value,
-			'f', -1, 64,
+			'f', -1, bitSize,
 		) +
 		ByteSymbolIEC[exponent]
 }
@@ -284,7 +304,8 @@ func (s *Size) AddInt(i int64) error {
 	return integerOverflow(s.f)
 }
 
-// String is the stringer method for the Size struct. It returns the canonical IEC string representation of the Size.
+// String is the stringer method for the Size struct.
+// It returns the canonical IEC string representation of the Size.
 func (s Size) String() string {
 	if s.r == "" {
 		return ToString(s.f)
@@ -293,7 +314,7 @@ func (s Size) String() string {
 	return s.r
 }
 
-// exponentFromSize determines the appropriate IEC binary unit for a given byte size.
+// exponentFromSize determines the appropriate IEC binary for a given byte size.
 // It returns the index into ByteValueIEC/ByteSymbolIEC arrays corresponding to
 // the largest unit that can represent the size.
 func exponentFromSize(size float64) int {
@@ -339,14 +360,15 @@ func exponentFromSymbol(symbol string) (int, error) {
 	return 0, errors.New(ErrInvalidIEC)
 }
 
-// integerOverflow checks if a byte size value exceeds the maximum representable value.
-// This is used to prevent integer overflow when working with large sizes.
-// The maximum value is slightly less than 9 EiB (9 * 2^60 bytes), which is
-// the largest value that can be safely represented by an int64.
+// integerOverflow checks if a byte size value exceeds the maximum
+// representable value. This is used to prevent integer overflow when working
+// with large sizes. The maximum value is slightly less than 9 EiB
+// (9 * 2^60 bytes), which is the largest value that can be safely
+// represented by an int64.
 //
 // Returns ErrIntegerOverflow if the size is too large, nil otherwise.
 func integerOverflow(size float64) error {
-	if math.Ldexp(size, 10) >= 1<<64 {
+	if math.Ldexp(size, exponent) >= 1<<bitSize {
 		return errors.New(ErrIntegerOverflow)
 	}
 

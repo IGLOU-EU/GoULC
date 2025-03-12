@@ -70,7 +70,7 @@ type Response struct {
 
 // Name returns the identifier for this response type.
 // It implements the response.Response interface.
-func (r Response) Name() string {
+func (_ Response) Name() string {
 	return ResponseName
 }
 

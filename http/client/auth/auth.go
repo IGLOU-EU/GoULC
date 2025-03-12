@@ -24,7 +24,7 @@
 package auth
 
 import (
-	"net/url"
+	net_url "net/url"
 )
 
 // Authenticator defines the interface for authentication mechanisms.
@@ -38,7 +38,7 @@ type Authenticator interface {
 	// Header generates the authentication header based on the provided method,
 	// URL, and body. It returns the header key, header value, and any error
 	// encountered.
-	Header(method string, url *url.URL, body []byte) (string, string, error)
+	Header(method string, url *net_url.URL, body []byte) (string, string, error)
 
 	// Clone creates and returns a copy of the authenticator.
 	Clone() Authenticator

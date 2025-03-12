@@ -25,12 +25,12 @@ import (
 )
 
 const (
-	ErrJsonInvalidType = "invalid JSON byte Size type, it should be a string or a number"
+	ErrJSONInvalidType = "invalid JSON byte Size type, it should be a string or a number"
 )
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (d *Size) UnmarshalJSON(b []byte) error {
-	var i interface{}
+	var i any
 	if err := json.Unmarshal(b, &i); err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func (d *Size) UnmarshalJSON(b []byte) error {
 			return err
 		}
 	default:
-		return errors.New(ErrJsonInvalidType)
+		return errors.New(ErrJSONInvalidType)
 	}
 
 	return nil

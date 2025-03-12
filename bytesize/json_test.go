@@ -47,7 +47,7 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 		{
 			name:  "invalid json type",
 			input: `["Minsc", "Boo"]`,
-			err:   bytesize.ErrJsonInvalidType,
+			err:   bytesize.ErrJSONInvalidType,
 		},
 	}
 

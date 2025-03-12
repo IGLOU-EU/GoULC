@@ -28,7 +28,8 @@ import (
 // Config defines the configuration options for the logger.
 // It controls the logging level, output coloring, and source code information.
 type Config struct {
-	// Level defines the minimum logging level ("DEBUG", "INFO", "WARN", "ERROR")
+	// Level defines the minimum logging level
+	// ("DEBUG", "INFO", "WARN", "ERROR")
 	Level string `json:"level"`
 	// Colored enables ANSI color output in log messages
 	Colored bool `json:"colored"`

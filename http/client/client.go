@@ -43,6 +43,12 @@ import (
 	"gitlab.com/iglou.eu/goulc/http/utils"
 )
 
+const (
+	percent = 100
+
+	LoopRateDuration = 100 * time.Millisecond
+)
+
 var (
 	// ErrEmptyServerURL is returned when the server URL is empty
 	ErrEmptyServerURL = errors.New("server URL cannot be empty")
@@ -120,7 +126,10 @@ var OptDefault = Options{
 //
 // It returns a Client instance configured with the provided parameters or
 // an error if the `serverURL` is invalid or cannot be parsed.
-func New(ctx context.Context, serverURL string, authenticator auth.Authenticator, opt *Options, logger *slog.Logger) (Client, error) {
+func New(
+	ctx context.Context, serverURL string, authenticator auth.Authenticator,
+	opt *Options, logger *slog.Logger,
+) (Client, error) {
 	var err error
 
 	// Empty url are not allowed
@@ -220,7 +229,7 @@ func (c *Client) NewChild(path string) *Client {
 		if child.URL.Path == "/" {
 			child.URL.Path = newPath
 		} else {
-			child.URL.Path = child.URL.Path + newPath
+			child.URL.Path += newPath
 		}
 	}
 
@@ -298,7 +307,8 @@ func (c *Client) Clone() *Client {
 //
 // client.FlushHeader().FlushQuery()
 func (c *Client) FlushHeader() *Client {
-	c.logger.Debug("flushing headers", "current_headers", slices.Sorted(maps.Keys(c.Header)))
+	c.logger.Debug("flushing headers", "current_headers",
+		slices.Sorted(maps.Keys(c.Header)))
 
 	c.Mu.Lock()
 	c.Header = http.Header{}
@@ -346,7 +356,7 @@ func (c *Client) calculateErrorRate(statusCode int) float64 {
 		URL:        c.URL.String(),
 		StatusCode: statusCode,
 		Timestamp:  now,
-		IsError:    statusCode >= 400,
+		IsError:    statusCode >= http.StatusBadRequest,
 	})
 	c.ErrorHistory = newHistory
 
@@ -362,13 +372,15 @@ func (c *Client) calculateErrorRate(statusCode int) float64 {
 		}
 	}
 
-	return float64(errorCount) / float64(len(newHistory)) * 100
+	return float64(errorCount) / float64(len(newHistory)) * percent
 }
 
 // FollowRedirects returns a RedirectFunc that follows HTTP redirects according
 // to the client's options. It also records the redirects in the trace
 // parameter.
-func (c *Client) FollowRedirects(trace *[]Redirects) func(req *http.Request, via []*http.Request) error {
+func (c *Client) FollowRedirects(
+	trace *[]Redirects,
+) func(req *http.Request, via []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if !c.Options.Follow {
 			return http.ErrUseLastResponse
@@ -463,7 +475,7 @@ func (c *Client) Close() error {
 	done := make(chan struct{})
 	go func() {
 		for atomic.LoadInt32(&c.activeRequests) > 0 {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(LoopRateDuration)
 		}
 		close(done)
 	}()
@@ -519,7 +531,7 @@ func (c *Client) Close() error {
 // DoWithMarshal is a convenience function that performs a client.Do() call but
 // with a body Marshaller instance. For nil body, prefer to use Do instead.
 func (main *Client) DoWithMarshal(
-	method string, body Marshaler, uml Unmarshaler,
+	method string, body Marshaler, resp Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
@@ -531,7 +543,7 @@ func (main *Client) DoWithMarshal(
 	c := main.Clone() // Clone are thread-safe
 
 	if body == nil {
-		return c.Do(method, nil, uml)
+		return c.Do(method, nil, resp)
 	}
 
 	c.logger.Debug("http client marshalling body",
@@ -545,7 +557,7 @@ func (main *Client) DoWithMarshal(
 
 	c.Header.Set("Content-Type", body.ContentType())
 
-	return c.Do(method, bodyData, uml)
+	return c.Do(method, bodyData, resp)
 }
 
 // Do performs an HTTP request with the specified method and body. It manages
@@ -559,18 +571,18 @@ func (main *Client) DoWithMarshal(
 //	if err != nil {
 //	    return err
 //	}
-//	// Use type assertion like resp.BodyUml.(*MyResponseType) to access parsed data
+//	// Use type assertion like resp.BodyUml.(*MyResponseType) to access data
 //
 // Parameters:
 //   - method: The HTTP method to use for the request.
 //   - body: The request payload as a byte slice. Can be nil.
-//   - uml: An Unmarshaler instance to parse the response body.
+//   - respUml: An Unmarshaler instance to parse the response body.
 //
 // Returns:
 //   - A pointer to a Response containing the HTTP response details.
 //   - An error if the request fails or the client is closed.
 func (main *Client) Do(
-	method string, body []byte, uml Unmarshaler,
+	method string, body []byte, respUml Unmarshaler,
 ) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
@@ -606,10 +618,10 @@ func (main *Client) Do(
 
 	if body != nil {
 		req, err = http.NewRequestWithContext(c.context,
-			string(method), c.URL.String(), bytes.NewReader(body))
+			method, c.URL.String(), bytes.NewReader(body))
 	} else {
 		req, err = http.NewRequestWithContext(c.context,
-			string(method), c.URL.String(), nil)
+			method, c.URL.String(), nil)
 	}
 
 	if err != nil {
@@ -690,8 +702,8 @@ func (main *Client) Do(
 	defer httpRes.Body.Close()
 
 	// Create response object with essential info
-	res := &Response{
-		Success:      httpRes.StatusCode < 400,
+	resp := &Response{
+		Success:      httpRes.StatusCode < http.StatusBadRequest,
 		StatusCode:   httpRes.StatusCode,
 		Status:       httpRes.Status,
 		Proto:        httpRes.Proto,
@@ -704,23 +716,23 @@ func (main *Client) Do(
 	}
 
 	c.logger.Debug("HTTP request",
-		"success", res.Success,
+		"success", resp.Success,
 		"method", req.Method,
 		"path", req.URL.Path,
-		"status", res.Status,
-		"trace", res.Trace,
-		"response_time", res.ResponseTime,
-		"error_rate", res.ErrorRate)
+		"status", resp.Status,
+		"trace", resp.Trace,
+		"response_time", resp.ResponseTime,
+		"error_rate", resp.ErrorRate)
 
 	if httpRes.ContentLength == 0 {
 		c.logger.Debug("empty response body received")
-		return res, nil
+		return resp, nil
 	}
 	c.logger.Debug("reading response body",
-		"status_code", res.StatusCode,
+		"status_code", resp.StatusCode,
 		"content_length", httpRes.ContentLength)
 
-	res.Body, err = io.ReadAll(httpRes.Body)
+	resp.Body, err = io.ReadAll(httpRes.Body)
 	if err != nil {
 		return nil, errors.Join(ErrRequestFailed, err)
 	}
@@ -729,20 +741,20 @@ func (main *Client) Do(
 	// This allows automatic parsing of JSON/XML/etc into structs
 	// The unmarshaler has access to both the status code and body
 	// to handle different response formats based on status
-	if uml != nil {
+	if respUml != nil {
 		c.logger.Debug("unmarshaling response body",
-			"unmarshaler", uml.Name(),
-			"body_size", len(res.Body))
+			"unmarshaler", respUml.Name(),
+			"body_size", len(resp.Body))
 
-		res.BodyUml = uml
-		if err := res.BodyUml.Unmarshal(
-			res.StatusCode, res.Header, res.Body,
+		resp.BodyUml = respUml
+		if err := resp.BodyUml.Unmarshal(
+			resp.StatusCode, resp.Header, resp.Body,
 		); err != nil {
 			return nil, errors.Join(ErrRequestFailed, err)
 		}
 	}
 
-	return res, nil
+	return resp, nil
 }
 
 // IsClosed checks if the client is closed.

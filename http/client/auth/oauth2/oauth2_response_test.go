@@ -97,33 +97,35 @@ func TestResponse_Unmarshal(t *testing.T) {
 			}
 
 			if !tt.wantErr {
-				// Check token response fields
-				if r.Token != tt.want.Token {
-					t.Errorf("Token = %v, want %v", r.Token, tt.want.Token)
-				}
-				if r.TokenType != tt.want.TokenType {
-					t.Errorf("TokenType = %v, want %v", r.TokenType, tt.want.TokenType)
-				}
-				if r.ExpiresIn != tt.want.ExpiresIn {
-					t.Errorf("ExpiresIn = %v, want %v", r.ExpiresIn, tt.want.ExpiresIn)
-				}
-				if r.RefreshToken != tt.want.RefreshToken {
-					t.Errorf("RefreshToken = %v, want %v", r.RefreshToken, tt.want.RefreshToken)
-				}
-				if r.Scope != tt.want.Scope {
-					t.Errorf("Scope = %v, want %v", r.Scope, tt.want.Scope)
-				}
+				return
+			}
 
-				// Check error response fields
-				if r.Error != tt.want.Error {
-					t.Errorf("Error = %v, want %v", r.Error, tt.want.Error)
-				}
-				if r.ErrorDescription != tt.want.ErrorDescription {
-					t.Errorf("ErrorDescription = %v, want %v", r.ErrorDescription, tt.want.ErrorDescription)
-				}
-				if r.ErrorURI != tt.want.ErrorURI {
-					t.Errorf("ErrorURI = %v, want %v", r.ErrorURI, tt.want.ErrorURI)
-				}
+			// Check token response fields
+			if r.Token != tt.want.Token {
+				t.Errorf("Token = %v, want %v", r.Token, tt.want.Token)
+			}
+			if r.TokenType != tt.want.TokenType {
+				t.Errorf("TokenType = %v, want %v", r.TokenType, tt.want.TokenType)
+			}
+			if r.ExpiresIn != tt.want.ExpiresIn {
+				t.Errorf("ExpiresIn = %v, want %v", r.ExpiresIn, tt.want.ExpiresIn)
+			}
+			if r.RefreshToken != tt.want.RefreshToken {
+				t.Errorf("RefreshToken = %v, want %v", r.RefreshToken, tt.want.RefreshToken)
+			}
+			if r.Scope != tt.want.Scope {
+				t.Errorf("Scope = %v, want %v", r.Scope, tt.want.Scope)
+			}
+
+			// Check error response fields
+			if r.Error != tt.want.Error {
+				t.Errorf("Error = %v, want %v", r.Error, tt.want.Error)
+			}
+			if r.ErrorDescription != tt.want.ErrorDescription {
+				t.Errorf("ErrorDescription = %v, want %v", r.ErrorDescription, tt.want.ErrorDescription)
+			}
+			if r.ErrorURI != tt.want.ErrorURI {
+				t.Errorf("ErrorURI = %v, want %v", r.ErrorURI, tt.want.ErrorURI)
 			}
 		})
 	}

@@ -85,7 +85,7 @@ func TestNewClientCredentials(t *testing.T) {
 				},
 			},
 			logger:  nil,
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 
@@ -150,7 +150,7 @@ func TestClientCredentials_Update(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.mockStatusCode)
-				w.Write([]byte(tt.mockResponse))
+				_, _ = w.Write([]byte(tt.mockResponse))
 			}))
 			defer server.Close()
 
@@ -199,20 +199,20 @@ func TestClientCredentials_Header(t *testing.T) {
 		},
 	}
 
-	client, err := oauth2.NewClientCredentials(oauth2.ClientInHeader, config, logger, nil)
+	cc, err := oauth2.NewClientCredentials(oauth2.ClientInHeader, config, logger, nil)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
 	// Set up a mock token
-	client.Token = oauth2.TokenResponse{
+	cc.Token = oauth2.TokenResponse{
 		Token:     hided.String("test-token"),
 		TokenType: "Bearer",
 		ExpiresIn: duration.Duration{Duration: 3600},
 		ExpireAt:  time.Now().Add(time.Hour),
 	}
 
-	name, value, err := client.Header(http.MethodGet, nil, nil)
+	name, value, err := cc.Header(http.MethodGet, nil, nil)
 	if err != nil {
 		t.Errorf("Header() unexpected error: %v", err)
 	}

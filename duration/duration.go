@@ -40,7 +40,7 @@ type Duration struct {
 // With string inputs, it uses time.ParseDuration to interpret standard
 // duration formats (e.g., "1h30m").
 func (d *Duration) UnmarshalJSON(b []byte) error {
-	var i interface{}
+	var i any
 	if err := json.Unmarshal(b, &i); err != nil {
 		return err
 	}
@@ -54,7 +54,8 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		var err error
 		d.Duration, err = time.ParseDuration(value)
 		if err != nil {
-			return errors.Join(errors.New("failed to parse duration "+value), err)
+			return errors.Join(
+				errors.New("failed to parse duration "+value), err)
 		}
 	default:
 		return errors.New(ErrDurationInvalidType)

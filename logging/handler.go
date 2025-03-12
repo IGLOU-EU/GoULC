@@ -39,6 +39,8 @@ const (
 	colorMagenta      = "\033[35m"
 	colorBrightGrey   = "\033[90m"
 	colorBrightYellow = "\033[93m"
+
+	defaultBufferSize = 1024
 )
 
 var TimeFormat = "[2006-01-02 15:04:05]"
@@ -149,7 +151,7 @@ func (h *Handler) WithGroup(group string) slog.Handler {
 // - Includes timestamp, level, source location (if enabled), and message
 // - Formats and writes all record attributes
 // - Is concurrent-safe through mutex protection
-func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
+func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	// Set colors if enabled
 	var cLevel, cReset, cAttrs string
 	if h.opts.Colored {
@@ -172,7 +174,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 
 	// Init buffer
 	buf := bytes.NewBuffer(nil)
-	buf.Grow(1024) // Allocate a default size
+	buf.Grow(defaultBufferSize) // Allocate a default size
 
 	// Date and time
 	buf.WriteString(time.Now().Format(TimeFormat))
@@ -267,13 +269,17 @@ func (h *Handler) Cancel() bool {
 }
 
 // NewHandler creates a new Handler with the given writer and options.
-// The writer specifies where to write logs (separate streams for normal and error logs).
-// The opts parameter configures coloring, source code info, and base path.
-// The sopts parameter configures slog-specific handler options.
+//   - The writer specifies where to write logs
+//     (separate streams for normal and error logs).
+//   - The opts parameter configures coloring, source code info, and base path.
+//   - The sopts parameter configures slog-specific handler options.
 //
 // If opts or sopts is nil, default options will be used.
 // The handler is concurrent-safe and implements the slog.Handler interface.
-func NewHandler(cancel context.CancelFunc, w *model.Writer, opts *HandlerOptions, sopts *slog.HandlerOptions) *Handler {
+func NewHandler(
+	cancel context.CancelFunc, w *model.Writer,
+	opts *HandlerOptions, sopts *slog.HandlerOptions,
+) *Handler {
 	if opts == nil {
 		opts = &HandlerOptions{}
 	}

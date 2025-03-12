@@ -42,13 +42,14 @@ func TestNewBasic(t *testing.T) {
 				t.Errorf("NewBasic() expected error = %v, got = %v", tt.expectedErr, err)
 				return
 			}
-			if tt.expectedErr == nil {
-				if got.UserID != tt.userID {
-					t.Errorf("NewBasic().UserID = %v, want %v", got.UserID, tt.userID)
-				}
-				if got.Password != tt.password {
-					t.Errorf("NewBasic().Password = %v, want %v", got.Password, tt.password)
-				}
+			if tt.expectedErr != nil {
+				return
+			}
+			if got.UserID != tt.userID {
+				t.Errorf("NewBasic().UserID = %v, want %v", got.UserID, tt.userID)
+			}
+			if got.Password != tt.password {
+				t.Errorf("NewBasic().Password = %v, want %v", got.Password, tt.password)
 			}
 		})
 	}
@@ -100,7 +101,7 @@ func TestBasic_Name(t *testing.T) {
 }
 
 // TestBasic_Update juste for coverage...
-func TestBasic_Update(t *testing.T) {
+func TestBasic_Update(_ *testing.T) {
 	b := &auth.Basic{}
 	_ = b.Update()
 }

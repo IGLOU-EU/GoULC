@@ -63,10 +63,10 @@ const (
 
 	// Session variants of hash algorithms
 
-	DigestMD5_SESS       DigestAlgo = "md5-sess"
-	DigestSHA256_SESS    DigestAlgo = "sha-256-sess"
-	DigestSHA512_SESS    DigestAlgo = "sha-512-sess"
-	DigestSHA512256_SESS DigestAlgo = "sha-512-256-sess"
+	DigestMD5SESS       DigestAlgo = "md5-sess"
+	DigestSHA256SESS    DigestAlgo = "sha-256-sess"
+	DigestSHA512SESS    DigestAlgo = "sha-512-sess"
+	DigestSHA512256SESS DigestAlgo = "sha-512-256-sess"
 )
 
 // Verify Digest implements Authenticator interface
@@ -217,13 +217,13 @@ func NewDigest(
 }
 
 // Name returns the identifier for this authentication method.
-func (d *Digest) Name() string {
+func (_ *Digest) Name() string {
 	return DigestName
 }
 
 // Update implements the Authenticator interface.
 // This method is a no-op as there is no state to update.
-func (d *Digest) Update() error {
+func (_ *Digest) Update() error {
 	return nil
 }
 
@@ -236,15 +236,14 @@ func (d *Digest) Update() error {
 // 2. Building the header with all required fields
 // 3. Handling username encoding
 func (d *Digest) Header(method string, _ *url.URL, body []byte,
-) (string, string, error) {
-	A1 := d.A1()
-	A2 := d.A2(method, body)
-	response := d.Parameters.Hash([]byte(d.Response(A1, A2)))
+) (headerKey, headerValue string, err error) {
+	a1 := d.A1()
+	a2 := d.A2(method, body)
+	response := d.Parameters.Hash([]byte(d.Response(a1, a2)))
 
 	// Formating the Authorization Header Field Defined under RFC7616-3.4
 	// at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4
-	digestValues := make(digestValues, 0, 11)
-	digestValues = append(digestValues, []digestValue{
+	digestValues := digestValues{
 		{
 			key:    "uri",
 			value:  d.Parameters.URI,
@@ -291,27 +290,28 @@ func (d *Digest) Header(method string, _ *url.URL, body []byte,
 			key:   "userhash",
 			value: strconv.FormatBool(d.Parameters.UserHash),
 		},
-	}...)
+	}
 
 	// User hash or UTF-8 username declaration header
 	// Defined under RFC7616-3.4.4
 	// at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.4
 	// And under RFC7616-4
 	// at https://datatracker.ietf.org/doc/html/rfc7616#section-4
-	if d.Parameters.UserHash {
+	switch {
+	case d.Parameters.UserHash:
 		digestValues = append(digestValues, digestValue{
 			key: "username",
 			value: d.Parameters.Hash(
 				[]byte(d.Username + `:` + d.Parameters.Realm)),
 			quoted: true,
 		})
-	} else if ascii.IsPrintable(d.Username) {
+	case ascii.IsPrintable(d.Username):
 		digestValues = append(digestValues, digestValue{
 			key:    "username",
 			value:  d.Username,
 			quoted: true,
 		})
-	} else {
+	default:
 		digestValues = append(digestValues, digestValue{
 			key:      "username",
 			value:    "UTF-8''" + url.QueryEscape(d.Username),
@@ -337,7 +337,7 @@ func (d *Digest) Clone() Authenticator {
 // For session-based algorithms (-sess suffix), it includes the nonce
 // and cnonce values. Returns the computed A1 value used as secret Keyed.
 func (d *Digest) A1() string {
-	A1 := strings.Join([]string{
+	a1 := strings.Join([]string{
 		d.Username,
 		d.Parameters.Realm,
 		d.Password,
@@ -345,13 +345,13 @@ func (d *Digest) A1() string {
 
 	if strings.HasSuffix(string(d.Parameters.Algorithm), "-sess") {
 		return strings.Join([]string{
-			d.Parameters.Hash([]byte(A1)),
+			d.Parameters.Hash([]byte(a1)),
 			d.Parameters.Nonce,
 			d.Parameters.CNonce,
 		}, DigestSeparator)
 	}
 
-	return A1
+	return a1
 }
 
 // A2 computes the A2 value as specified in RFC7616 section 3.4.3.
@@ -361,14 +361,14 @@ func (d *Digest) A1() string {
 func (d *Digest) A2(method string, body []byte) string {
 	if d.Parameters.QOP == DigestQOPAuthInt {
 		return strings.Join([]string{
-			string(method),
+			method,
 			d.Parameters.URI,
 			d.Parameters.Hash(body),
 		}, DigestSeparator)
 	}
 
 	return strings.Join([]string{
-		string(method),
+		method,
 		d.Parameters.URI,
 	}, DigestSeparator)
 }
@@ -379,23 +379,23 @@ func (d *Digest) A2(method string, body []byte) string {
 // Note: Support the deprecated RFC2069 section 2.1.2 backwards compatibility
 // at https://datatracker.ietf.org/doc/html/rfc2069#section-2.1.2
 // Returns the response string used in the Authorization header.
-func (d *Digest) Response(A1, A2 string) string {
+func (d *Digest) Response(a1, a2 string) string {
 	if d.Parameters.QOP == DigestQOPAuth ||
 		d.Parameters.QOP == DigestQOPAuthInt {
 		return strings.Join([]string{
-			d.Parameters.Hash([]byte(A1)), // The secret Keyed Digest
+			d.Parameters.Hash([]byte(a1)), // The secret Keyed Digest
 			d.Parameters.Nonce,
 			d.Parameters.NC,
 			d.Parameters.CNonce,
 			d.Parameters.QOP,
-			d.Parameters.Hash([]byte(A2)),
+			d.Parameters.Hash([]byte(a2)),
 		}, DigestSeparator)
 	}
 
 	return strings.Join([]string{
-		d.Parameters.Hash([]byte(A1)), // The secret Keyed Digest
+		d.Parameters.Hash([]byte(a1)), // The secret Keyed Digest
 		d.Parameters.Nonce,
-		d.Parameters.Hash([]byte(A2)),
+		d.Parameters.Hash([]byte(a2)),
 	}, DigestSeparator)
 }
 
@@ -411,16 +411,16 @@ func (d *Digest) Response(A1, A2 string) string {
 // the ErrUnknownAlgorithm error message.
 func (d *DigestParameters) Hash(s []byte) string {
 	switch d.Algorithm {
-	case DigestSHA256, DigestSHA256_SESS:
+	case DigestSHA256, DigestSHA256SESS:
 		sum := sha256.Sum256(s)
 		return hex.EncodeToString(sum[:])
-	case DigestSHA512256, DigestSHA512256_SESS:
+	case DigestSHA512256, DigestSHA512256SESS:
 		sum := sha512.Sum512_256(s)
 		return hex.EncodeToString(sum[:])
-	case DigestSHA512, DigestSHA512_SESS:
+	case DigestSHA512, DigestSHA512SESS:
 		sum := sha512.Sum512(s)
 		return hex.EncodeToString(sum[:])
-	case DigestMD5, DigestMD5_SESS:
+	case DigestMD5, DigestMD5SESS:
 		sum := md5.Sum(s)
 		return hex.EncodeToString(sum[:])
 	}

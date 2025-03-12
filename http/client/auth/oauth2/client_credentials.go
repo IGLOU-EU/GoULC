@@ -20,13 +20,15 @@
 package oauth2
 
 import (
+	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 	"time"
+
+	net_http "net/http"
 
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
@@ -69,38 +71,37 @@ type ClientCredentials struct {
 // NewClientCredentials creates a new ClientCredentials instance with
 // the specified authentication type, configuration, and logger.
 func NewClientCredentials(
-	clientAuth ClientCredentialsType, config Config, log *slog.Logger, http *client.Client,
+	clientAuth ClientCredentialsType, config Config, log *slog.Logger,
+	http *client.Client,
 ) (*ClientCredentials, error) {
-	if log == nil {
-		return nil, errors.New("nil logger provided")
+	cc := &ClientCredentials{
+		log:  log,
+		http: http,
+
+		Config:     config,
+		ClientAuth: clientAuth,
 	}
 
-	var httpInt *client.Client
-	if http != nil {
-		httpInt = http
-	} else {
+	if log == nil {
+		cc.log = slog.Default()
+	}
+
+	if http == nil {
 		http, err := client.New(
-			nil, config.Endpoint.URL,
-			nil, &client.OptDefault,
-			log.WithGroup("oauth2"))
+			context.Background(), config.Endpoint.URL, nil,
+			&client.OptDefault, cc.log.WithGroup("oauth2"))
 		if err != nil {
 			return nil, err
 		}
 
-		httpInt = &http
+		cc.http = &http
 	}
 
-	return &ClientCredentials{
-		log:  log,
-		http: httpInt,
-
-		Config:     config,
-		ClientAuth: clientAuth,
-	}, nil
+	return cc, nil
 }
 
 // Name returns the identifier for the Client Credentials authentication method.
-func (g *ClientCredentials) Name() string {
+func (_ *ClientCredentials) Name() string {
 	return ClientCredentialsName
 }
 
@@ -122,7 +123,7 @@ func (g *ClientCredentials) Update() error {
 // Header provides the authorization header required
 // for authenticated HTTP requests.
 func (g *ClientCredentials) Header(_ string, _ *url.URL, _ []byte,
-) (string, string, error) {
+) (headerKey, headerValue string, err error) {
 	return ClientCredentialsHeaderName,
 		ClientCredentialsHeaderPrefix + g.Token.Token.Value().(string),
 		nil
@@ -172,13 +173,13 @@ func (g *ClientCredentials) newToken() error {
 
 	// Due to body presence we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
-	res, err := c.Do(http.MethodPost, []byte(data.Encode()), &Response{})
+	res, err := c.Do(net_http.MethodPost, []byte(data.Encode()), &Response{})
 	if err != nil {
 		return err
 	}
 
 	// RFC 6749 §4.4.3: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3
-	if res.StatusCode != 200 {
+	if res.StatusCode != net_http.StatusOK {
 		g.log.Debug("Unexpected server response",
 			"code", res.Status,
 			"body", res.Body)
@@ -186,7 +187,7 @@ func (g *ClientCredentials) newToken() error {
 			"The authorization server as returned an unexpected status code")
 	}
 
-	if len(res.Body) <= 0 {
+	if len(res.Body) == 0 {
 		return errors.New("The authorization server as returned an empty body")
 	}
 
