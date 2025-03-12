@@ -53,7 +53,7 @@ func TestDurationUnmarshalJSON(t *testing.T) {
 			input:   `{"duration": true}`,
 			want:    0,
 			wantErr: true,
-			err:     json_helper.ErrDurationInvalidType,
+			err:     json_helper.ErrDurationInvalidType.Error(),
 		},
 		{
 			name:    "invalid json",

@@ -25,8 +25,10 @@ import (
 	"time"
 )
 
-const (
-	ErrDurationInvalidType = "invalid JSON duration type, it should be a number or a string"
+var (
+	ErrBadDuration         = errors.New("failed to parse duration")
+	ErrDurationInvalidType = errors.New(
+		"invalid JSON duration type, it should be a number or a string")
 )
 
 // Duration is a custom type that wraps time.Duration to provide
@@ -54,11 +56,10 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		var err error
 		d.Duration, err = time.ParseDuration(value)
 		if err != nil {
-			return errors.Join(
-				errors.New("failed to parse duration "+value), err)
+			return errors.Join(ErrBadDuration, errors.New("value: "+value), err)
 		}
 	default:
-		return errors.New(ErrDurationInvalidType)
+		return ErrDurationInvalidType
 	}
 
 	return nil
