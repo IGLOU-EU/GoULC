@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/gitlab.com/iglou.eu/goulc)](https://goreportcard.com/report/gitlab.com/iglou.eu/goulc)
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc)
 [![coverage](https://gitlab.com/iglou.eu/goulc/badges/main/coverage.svg?job=coverage_report)](https://gitlab.com/iglou.eu/goulc/-/jobs)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: LGPL-3.0 or later](https://img.shields.io/badge/License-LGPLv3_or_later-00802d.svg)](http://www.gnu.org/licenses/lgpl-3.0.html)
 
 GoULC (pronounced as one word) is a collection of Go libraries I developed for my professional and personal usage. Born out of the desire to reduce cascading and/or redundant dependencies across projects, GoULC focuses on lightweight implementations while leveraging Go's standard library whenever possible. While primarily designed for my own use cases, feel free to use it if it fits your needs! 😊
 
@@ -52,7 +52,7 @@ See the [hided package documentation](hided/README.md).
 
 A Go package providing a flexible and thread-safe HTTP client with built-in support for various authentication methods and advanced features.
 
-See the [hided package documentation](http/README.md).
+See the [HTTP package documentation](http/README.md).
 
 ### 📝 Logging
 
@@ -68,7 +68,22 @@ Take a look at the [contributing guide](CONTRIBUTING.md)
 
 ## 📜 License
 
-This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0) - see the [LICENSE](LICENSE) file for details.
+This library is licensed under the [GNU Lesser General Public License v3.0 or later (LGPL v3 or later)](http://www.gnu.org/licenses/lgpl-3.0.html).
+
+### How to use it
+
+The LGPLv3 license only requires that:
+1. You provide attribution (include copyright notices)
+2. You include a copy of the licenses with your distribution
+3. Your application code remains under your chosen license
+
+For the complete license text, see [COPYING](COPYING) AND [COPYING.LESSER](COPYING.LESSER).
+
+### What this means
+
+- ✅ **You can use this library in any software project** regardless of your project's license (MIT, Apache, GPL, proprietary, etc.)
+- ✅ **Any modifications to this library must be shared** under the same license with the community
+- ✅ **If you distribute this library** (modified or not), you must include the license and copyright notices
 
 ## 🛠️ Support
 

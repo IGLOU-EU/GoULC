@@ -72,4 +72,4 @@ This package uses IEC binary units (powers of 1024) rather than SI decimal units
 
 ## 📜 License
 
-This package is part of GoULC and is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0).
+This library is licensed under the [GNU Lesser General Public License v3.0 or later (LGPL v3 or later)](http://www.gnu.org/licenses/lgpl-3.0.html).
