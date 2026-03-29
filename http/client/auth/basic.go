@@ -58,7 +58,7 @@ func NewBasic(userID string, password hided.String) (Basic, error) {
 		return Basic{}, ErrNoUserID
 	}
 
-	if password.Value() == hided.String("").Value() {
+	if password.IsEmpty() {
 		return Basic{}, ErrNoPassword
 	}
 

@@ -12,12 +12,20 @@ func main() {
 	// Print the secret key directly... Ooops
 	fmt.Printf("Try to connect to Batman with secret key: %s\n\n", mySecretKey)
 
-	// Convert a sensitive string into a "hided" string that masks its content
-	myHidedSecretKey := hided.String("Haha, this time, i'm hided!")
-	// Print a masked version of the secret key
+	// Create a hided string using the constructor
+	myHidedSecretKey := hided.NewString("Haha, this time, i'm hided!")
+
+	// All fmt verbs produce "***", the value never leaks
 	fmt.Println("Batcode for the Batcave:", myHidedSecretKey)
+	fmt.Printf("  %%s  = %s\n", myHidedSecretKey)
+	fmt.Printf("  %%v  = %v\n", myHidedSecretKey)
+	fmt.Printf("  %%q  = %q\n", myHidedSecretKey)
+	fmt.Printf("  %%+v = %+v\n", myHidedSecretKey)
+	fmt.Printf("  %%#v = %#v\n\n", myHidedSecretKey)
+
 	// Retrieve and print the MD5 hash for debugging without revealing the actual key
 	fmt.Println("DEBUG: I need to know if the code is correct, but without displaying it:", myHidedSecretKey.HashMD5())
-	// Extract the original value safely when necessary
+
+	// Value() is the ONLY way to access the real value
 	fmt.Printf("I need to use it! batcavePass(%v) \n", myHidedSecretKey.Value())
 }

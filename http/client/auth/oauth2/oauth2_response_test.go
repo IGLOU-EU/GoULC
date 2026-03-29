@@ -34,10 +34,10 @@ func TestResponse_Unmarshal(t *testing.T) {
 			}`,
 			want: oauth2.Response{
 				TokenResponse: oauth2.TokenResponse{
-					Token:        hided.String("secret-token"),
+					Token:        hided.NewString("secret-token"),
 					TokenType:    "Bearer",
 					ExpiresIn:    duration.Duration{Duration: 3600},
-					RefreshToken: hided.String("refresh-secret"),
+					RefreshToken: hided.NewString("refresh-secret"),
 					Scope:        "read write",
 				},
 			},
@@ -82,7 +82,7 @@ func TestResponse_Unmarshal(t *testing.T) {
 			}
 
 			// Check token response fields
-			if r.Token != tt.want.Token {
+			if r.Token.Value() != tt.want.Token.Value() {
 				t.Errorf("Token = %v, want %v", r.Token, tt.want.Token)
 			}
 			if r.TokenType != tt.want.TokenType {
@@ -91,7 +91,7 @@ func TestResponse_Unmarshal(t *testing.T) {
 			if r.ExpiresIn != tt.want.ExpiresIn {
 				t.Errorf("ExpiresIn = %v, want %v", r.ExpiresIn, tt.want.ExpiresIn)
 			}
-			if r.RefreshToken != tt.want.RefreshToken {
+			if r.RefreshToken.Value() != tt.want.RefreshToken.Value() {
 				t.Errorf("RefreshToken = %v, want %v", r.RefreshToken, tt.want.RefreshToken)
 			}
 			if r.Scope != tt.want.Scope {

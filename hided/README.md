@@ -2,18 +2,21 @@
 
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc/hided.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc/hided)
 
-A Go package to prevent sensitive data leakage from logs and error messages. It provides a simple interface with support for obfuscation and integration with Gorm ORM.
+A Go package to prevent sensitive data leakage from logs, error messages, and any form of string output. It provides a secure struct-based approach with support for obfuscation and integration with Gorm ORM.
 
 ## 🎯 Features
 
-- **🔒 Obfuscation:**
-  - Implements the Hider interface with:
-    - `fmt.Stringer` returning "***"
-    - `HashMD5` for hash-based obfuscation comparison
+- **🔒 Secure by Design:**
+  - `hided.String` is a struct with an unexported `[]byte` field, making it impossible to leak via type assertion or casting.
+  - `String()`, `GoString()`, and `Format()` all return `"***"`, covering `%s`, `%v`, `%q`, `%+v`, `%#v`, and all other fmt verbs.
+  - `MarshalJSON()` and `MarshalText()` return `"***"`, preventing leakage through JSON or text serialization.
+  - Built-in `print()`/`println()` cannot leak the value since the underlying data is a struct with unexported fields.
+  - `Value()` is the **only** way to access the real value.
 
 - **🛠️ Type Implementations:**
-  - Provides a clear string type (`hided.String`).
-  - Supports the Hider interface with `Value` for accessing the underlying data.
+  - Constructor: `NewString(s string) String` to create a hided string.
+  - Implements the `Hider` interface with `Value` for accessing the underlying data.
+  - `HashMD5` for hash-based obfuscation comparison.
 
 - **🔥 Gorm Integration:**
   - Custom Gorm-enabled string type (`GormString`) to use with `gorm.Valuer` and a custom `GormHider` interface.

@@ -24,29 +24,82 @@ package hided
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 )
 
-// String holds sensitive data and implements obfuscation
-type String string
+// String holds sensitive data and implements obfuscation.
+// It is a struct with an unexported field to prevent direct access or casting.
+type String struct {
+	val []byte
+}
 
-// String implements fmt.Stringer to return an obfuscated string
+var _ = Hider(String{})
+var _ = json.Marshaler(String{})
+var _ = json.Unmarshaler(&String{})
+
+// NewString creates a new String from the given plaintext.
+func NewString(s string) String {
+	return String{val: []byte(s)}
+}
+
+// String implements fmt.Stringer to return an obfuscated string.
 func (_ String) String() string {
-	return "***"
+	return obfuscated
 }
 
-// IsEmpty returns true if the underlying string is empty
+// GoString implements fmt.GoStringer to prevent leaks via %#v.
+func (_ String) GoString() string {
+	return obfuscated
+}
+
+// Format implements fmt.Formatter to prevent leaks via any fmt verb.
+func (_ String) Format(f fmt.State, _ rune) {
+	fmt.Fprint(f, obfuscated)
+}
+
+// IsEmpty returns true if the underlying string is empty.
 func (s String) IsEmpty() bool {
-	return string(s) == ""
+	return len(s.val) == 0
 }
 
-// HashMD5 returns an MD5 hash of the string for obfuscation comparison
-// Note: MD5 is used solely for obfuscation, not for security
+// HashMD5 returns an MD5 hash of the string for obfuscation comparison.
+// Note: MD5 is used solely for obfuscation, not for security.
 func (s String) HashMD5() string {
-	hash := md5.Sum([]byte(s))
+	hash := md5.Sum(s.val)
 	return hex.EncodeToString(hash[:])
 }
 
-// Value returns the underlying string value
+// Value returns the underlying string value.
 func (s String) Value() any {
-	return string(s)
+	return string(s.val)
+}
+
+// MarshalJSON implements json.Marshaler to prevent leaks in JSON output.
+func (_ String) MarshalJSON() ([]byte, error) {
+	return json.Marshal(obfuscated)
+}
+
+// MarshalText implements encoding.TextMarshaler to prevent leaks in text output.
+func (_ String) MarshalText() ([]byte, error) {
+	return []byte(obfuscated), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler to populate the hidden value from
+// a JSON string.
+func (s *String) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.val = []byte(raw)
+	return nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler to populate the hidden
+// value from text.
+func (s *String) UnmarshalText(data []byte) error {
+	s.val = make([]byte, len(data))
+	copy(s.val, data)
+	return nil
 }

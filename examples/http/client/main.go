@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
@@ -72,7 +73,7 @@ func main() {
 
 	// #04 Get request to /demons with authentication
 	// We need to create an authentification that support auth.Authenticator interface
-	auth, err := auth.NewBasic(Username, Password)
+	auth, err := auth.NewBasic(Username, hided.NewString(Password))
 	if err != nil {
 		panic(err)
 	}

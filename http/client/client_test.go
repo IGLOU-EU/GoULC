@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
@@ -416,7 +417,7 @@ func TestClient_Do(t *testing.T) {
 	})
 
 	t.Run("cAuth request", func(t *testing.T) {
-		basic, _ := auth.NewBasic("minsc", "go-for-the-eyes")
+		basic, _ := auth.NewBasic("minsc", hided.NewString("go-for-the-eyes"))
 		child := c.NewChild("/necropolis")
 		child.Auth = &basic
 

@@ -30,7 +30,7 @@ func TestNewClientCredentials(t *testing.T) {
 			clientAuth: oauth2.ClientInHeader,
 			config: oauth2.Config{
 				ClientID:     "test-client",
-				ClientSecret: hided.String("test-secret"),
+				ClientSecret: hided.NewString("test-secret"),
 				Endpoint: oauth2.Endpoint{
 					URL:  "https://example.com",
 					Auth: "/oauth/token",
@@ -45,7 +45,7 @@ func TestNewClientCredentials(t *testing.T) {
 			clientAuth: oauth2.ClientInBody,
 			config: oauth2.Config{
 				ClientID:     "test-client",
-				ClientSecret: hided.String("test-secret"),
+				ClientSecret: hided.NewString("test-secret"),
 				Endpoint: oauth2.Endpoint{
 					URL:  "https://example.com",
 					Auth: "/oauth/token",
@@ -59,7 +59,7 @@ func TestNewClientCredentials(t *testing.T) {
 			clientAuth: oauth2.ClientInHeader,
 			config: oauth2.Config{
 				ClientID:     "test-client",
-				ClientSecret: hided.String("test-secret"),
+				ClientSecret: hided.NewString("test-secret"),
 				Endpoint: oauth2.Endpoint{
 					URL:  "https://example.com",
 					Auth: "/oauth/token",
@@ -148,7 +148,7 @@ func TestClientCredentials_Update(t *testing.T) {
 
 			config := oauth2.Config{
 				ClientID:     "test-client",
-				ClientSecret: hided.String("test-secret"),
+				ClientSecret: hided.NewString("test-secret"),
 				Endpoint: oauth2.Endpoint{
 					URL:  serverURL.String(),
 					Auth: "/oauth/token",
@@ -173,7 +173,7 @@ func TestClientCredentials_Header(t *testing.T) {
 	logger := slog.Default()
 	config := oauth2.Config{
 		ClientID:     "test-client",
-		ClientSecret: hided.String("test-secret"),
+		ClientSecret: hided.NewString("test-secret"),
 		Endpoint: oauth2.Endpoint{
 			URL:  "https://example.com",
 			Auth: "/oauth/token",
@@ -187,7 +187,7 @@ func TestClientCredentials_Header(t *testing.T) {
 
 	// Set up a mock token
 	cc.Token = oauth2.TokenResponse{
-		Token:     hided.String("test-token"),
+		Token:     hided.NewString("test-token"),
 		TokenType: "Bearer",
 		ExpiresIn: duration.Duration{Duration: 3600},
 		ExpireAt:  time.Now().Add(time.Hour),
@@ -210,7 +210,7 @@ func TestClientCredentials_Clone(t *testing.T) {
 	logger := slog.Default()
 	config := oauth2.Config{
 		ClientID:     "test-client",
-		ClientSecret: hided.String("test-secret"),
+		ClientSecret: hided.NewString("test-secret"),
 		Endpoint: oauth2.Endpoint{
 			URL:  "https://example.com",
 			Auth: "/oauth/token",

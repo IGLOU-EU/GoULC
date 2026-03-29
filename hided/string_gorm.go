@@ -32,12 +32,14 @@ import (
 
 type GormString string
 
+var _ = GormHider(GormString(""))
+
 // GormValue implements gorm.Valuer to safely pass string data to gorm, you
 // need to implement gorm.ParamsFilter to keep value secret into your logger
 func (s String) GormValue(_ context.Context, _ *gorm.DB) clause.Expr {
 	return clause.Expr{
 		SQL:  "?",
-		Vars: []any{GormString(s)},
+		Vars: []any{GormString(s.Value().(string))},
 	}
 }
 
@@ -48,5 +50,5 @@ func (g GormString) String() string {
 
 // Hiding is to return an obfuscated string
 func (_ GormString) Hiding() string {
-	return "***"
+	return obfuscated
 }

@@ -19,14 +19,20 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
-// Package hided provides types and methods to obfuscate or mask sensitive data
+// Package hided provides types and methods to obfuscate or mask sensitive data.
 // It can be used to ensure that sensitive information is not exposed in logs
-// or any outputs
+// or any outputs.
+//
+// Implementations MUST also implement fmt.Formatter, fmt.GoStringer,
+// json.Marshaler, and encoding.TextMarshaler to prevent leaks through
+// formatting verbs, JSON serialization, and text marshaling.
 package hided
 
 import "fmt"
 
-// Hider defines types that can be obfuscated
+const obfuscated = "***"
+
+// Hider defines types that can be obfuscated.
 type Hider interface {
 	// String returns the obfuscated string (expected output: "***")
 	fmt.Stringer
@@ -34,8 +40,8 @@ type Hider interface {
 	// IsEmpty returns true if the underlying value is empty
 	IsEmpty() bool
 
-	// HashMD5 returns an MD5 hashed representation for obfuscation comparison
-	// Note: MD5 is used only for obfuscation, not for cryptographic security
+	// HashMD5 returns an MD5 hashed representation for obfuscation comparison.
+	// Note: MD5 is used only for obfuscation, not for cryptographic security.
 	HashMD5() string
 
 	// Value returns the underlying value

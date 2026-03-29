@@ -18,19 +18,19 @@ func TestNewBasic(t *testing.T) {
 		{
 			name:        "valid credentials",
 			userID:      "testuser",
-			password:    hided.String("testpass"),
+			password:    hided.NewString("testpass"),
 			expectedErr: nil,
 		},
 		{
 			name:        "empty userID",
 			userID:      "",
-			password:    hided.String("testpass"),
+			password:    hided.NewString("testpass"),
 			expectedErr: auth.ErrNoUserID,
 		},
 		{
 			name:        "empty password",
 			userID:      "testuser",
-			password:    hided.String(""),
+			password:    hided.NewString(""),
 			expectedErr: auth.ErrNoPassword,
 		},
 	}
@@ -48,7 +48,7 @@ func TestNewBasic(t *testing.T) {
 			if got.UserID != tt.userID {
 				t.Errorf("NewBasic().UserID = %v, want %v", got.UserID, tt.userID)
 			}
-			if got.Password != tt.password {
+			if got.Password.Value() != tt.password.Value() {
 				t.Errorf("NewBasic().Password = %v, want %v", got.Password, tt.password)
 			}
 		})
@@ -56,7 +56,7 @@ func TestNewBasic(t *testing.T) {
 }
 
 func TestBasic_Header(t *testing.T) {
-	basic, _ := auth.NewBasic("testuser", hided.String("testpass"))
+	basic, _ := auth.NewBasic("testuser", hided.NewString("testpass"))
 
 	name, value, err := basic.Header(http.MethodGet, nil, nil)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestBasic_Header(t *testing.T) {
 }
 
 func TestBasic_Clone(t *testing.T) {
-	original, _ := auth.NewBasic("testuser", hided.String("testpass"))
+	original, _ := auth.NewBasic("testuser", hided.NewString("testpass"))
 	cloned := original.Clone()
 
 	// Check if the cloned instance is a different pointer
@@ -87,13 +87,13 @@ func TestBasic_Clone(t *testing.T) {
 	if original.UserID != cloned.(*auth.Basic).UserID {
 		t.Errorf("Clone() UserID = %v, want %v", cloned.(*auth.Basic).UserID, original.UserID)
 	}
-	if original.Password != cloned.(*auth.Basic).Password {
+	if original.Password.Value() != cloned.(*auth.Basic).Password.Value() {
 		t.Errorf("Clone() Password = %v, want %v", cloned.(*auth.Basic).Password, original.Password)
 	}
 }
 
 func TestBasic_Name(t *testing.T) {
-	basic, _ := auth.NewBasic("testuser", hided.String("testpass"))
+	basic, _ := auth.NewBasic("testuser", hided.NewString("testpass"))
 
 	if got := basic.Name(); got != auth.BasicName {
 		t.Errorf("basic.Name() = %v, want %v", got, auth.BasicName)

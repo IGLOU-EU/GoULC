@@ -49,7 +49,7 @@ func main() {
 		Name:  "Clark Kent",
 		Email: "c-kent@daily-planet.com",
 		// With a super secret
-		Secret: "I'm Superman!",
+		Secret: hided.NewString("I'm Superman!"),
 	}
 	result := db.Create(&user)
 	if result.Error != nil {
@@ -81,7 +81,7 @@ func main() {
 	}
 
 	// Update the secret - Still not printed into logger
-	result = db.Model(&foundUser).Update("Secret", hided.String("Ho no!"))
+	result = db.Model(&foundUser).Update("Secret", hided.NewString("Ho no!"))
 	if result.Error != nil {
 		logger.Error("Failed to update user", "error", result.Error)
 	}
