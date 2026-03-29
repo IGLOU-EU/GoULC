@@ -26,30 +26,36 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"gitlab.com/iglou.eu/goulc/logging/model"
 )
 
-const (
-	ErrWriterOutNil   = "out writer is nil, this is probably a mistake"
-	ErrLogLevelUnknow = "Unknow log level provided"
+var (
+	ErrWriterOutNil = errors.New(
+		"out writer is nil, this is probably a mistake")
+	ErrLogLevelUnknown = errors.New("unknown log level provided")
 )
 
 // DefaultWriter provides the standard output configuration where
 // normal logs go to os.Stdout and error logs to os.Stderr
-var DefaultWriter = &model.Writer{Out: os.Stdout, Err: os.Stderr}
+func DefaultWriter() *model.Writer {
+	return &model.Writer{Out: os.Stdout, Err: os.Stderr}
+}
 
 // DefaultConfig provides the default logging configuration:
 // - Level: "INFO" (only INFO and above are logged)
 // - Colored: false (no ANSI colors in output)
 // - AddSource: true (includes source file and line information)
-var DefaultConfig = &model.Config{
-	Level: "INFO", Colored: false, AddSource: true}
+func DefaultConfig() *model.Config {
+	return &model.Config{
+		Level: "INFO", Colored: false, AddSource: true}
+}
 
 // New is a constructor for the Logger type.
 // Same as NewWithWriter with the default writer.
 func New(basePath string, cfg *model.Config) (*slog.Logger, error) {
-	return NewWithWriter(basePath, DefaultWriter, cfg)
+	return NewWithWriter(basePath, nil, cfg)
 }
 
 // NewWithWriter creates a new logger with a custom writer
@@ -64,38 +70,53 @@ func New(basePath string, cfg *model.Config) (*slog.Logger, error) {
 func NewWithWriter(
 	basePath string, writer *model.Writer, cfg *model.Config,
 ) (*slog.Logger, error) {
-	if writer == nil {
-		writer = DefaultWriter
-	}
-
-	if writer.Out == nil {
-		return nil, errors.New(ErrWriterOutNil)
-	}
-
-	if writer.Err == nil {
-		writer.Err = writer.Out
-	}
-
 	if cfg == nil {
-		cfg = DefaultConfig
+		cfg = DefaultConfig()
 	}
+	localCfg := *cfg
 
-	level, err := getLevel(cfg.Level)
+	level, err := getLevel(localCfg.Level)
 	if err != nil {
 		return nil, err
 	}
 
+	if writer == nil {
+		// When using the default writer we can safely force syslog
+		// prefixes if the process is running under systemd's journal.
+		// We only do this here because forcing syslog on a user-provided
+		// writer could interfere with their output format.
+		if IsSyslog() {
+			localCfg.ForceSyslog = true
+		}
+
+		writer = DefaultWriter()
+	}
+	w := *writer
+
+	if w.Out == nil {
+		return nil, ErrWriterOutNil
+	}
+
+	if w.Err == nil {
+		w.Err = w.Out
+	}
+
 	return slog.New(NewHandler(
-		cfg.Cancel,
-		writer,
+		localCfg.Cancel,
+		&w,
 		&HandlerOptions{
-			Colored:   cfg.Colored,
-			AddSource: cfg.AddSource,
-			BasePath:  basePath,
-		},
-		&slog.HandlerOptions{
-			AddSource: cfg.AddSource,
-			Level:     level,
+			Config: model.Config{
+				Colored:     localCfg.Colored,
+				AddSource:   localCfg.AddSource,
+				ForceSyslog: localCfg.ForceSyslog,
+				TimeFormat:  localCfg.TimeFormat,
+			},
+			HandlerOptions: slog.HandlerOptions{
+				AddSource: localCfg.AddSource,
+				Level:     level,
+			},
+
+			BasePath: basePath,
 		},
 	)), nil
 }
@@ -119,8 +140,11 @@ func Critical(l *slog.Logger, msg string, attrs ...any) {
 	}
 }
 
+// getLevel converts a log level string ("DEBUG", "INFO", "WARN", "ERROR")
+// to its corresponding slog.Level.
+// Returns an error if the level string is not recognized.
 func getLevel(level string) (slog.Level, error) {
-	switch level {
+	switch strings.ToUpper(level) {
 	case "DEBUG":
 		return slog.LevelDebug, nil
 	case "INFO":
@@ -130,6 +154,6 @@ func getLevel(level string) (slog.Level, error) {
 	case "ERROR":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, errors.New(ErrLogLevelUnknow + ": " + level)
+		return slog.LevelInfo, ErrLogLevelUnknown
 	}
 }

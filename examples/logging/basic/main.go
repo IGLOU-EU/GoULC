@@ -11,9 +11,11 @@ import (
 
 func main() {
 	// Create configuration
+	// TimeFormat can be custom at creation time
 	cfg := &model.Config{
-		Level:   "DEBUG",
-		Colored: true,
+		Level:      "DEBUG",
+		Colored:    true,
+		TimeFormat: "[20060102:150405]",
 	}
 
 	// Create a new logger with configuration
@@ -28,9 +30,6 @@ func main() {
 	logger.Info("This is an info message")
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message")
-
-	// Hot change of the time format
-	logging.TimeFormat = "[20060102:150405]"
 
 	// Logging with namespaces
 	mainLogger := logger.WithGroup("main")

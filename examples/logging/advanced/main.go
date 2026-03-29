@@ -26,7 +26,9 @@ func main() {
 		Out: logFile,
 	}
 
-	// Create configuration
+	// Create configuration.
+	// Other useful fields include TimeFormat (custom timestamp layout) and
+	// ForceSyslog (prepend syslog severity prefixes like <6>).
 	cfg := &model.Config{
 		Level:     "DEBUG",
 		Colored:   false,
@@ -67,7 +69,7 @@ func main() {
 
 	mainLogger.Info("A graceful shutdown with a critical example.")
 
-	fmt.Println("take a loot at app.log and error.log")
+	fmt.Println("take a look at app.log")
 }
 
 func example(logger *slog.Logger) {

@@ -8,9 +8,12 @@ A light and flexible logging package built on top of Go's `log/slog` that suppor
 
 - Multiple log levels (DEBUG, INFO, WARN, ERROR, CRITICAL)
 - Colored output option
+- Syslog support (automatic detection under systemd journal)
 - Source code reference
 - Custom formatting
+- Custom time format support
 - Concurrent-safe logging
+- `sync.Pool` buffer reuse for performance
 - Framework integrations (via build tags):
   - GORM (database query logging)
 
@@ -40,11 +43,17 @@ if _, f, _, ok := runtime.Caller(0); ok {
     basePath = filepath.Dir(f)
 }
 
-log := logging.New(basePath, cfg)
+log, err := logging.New(basePath, cfg)
+if err != nil {
+    panic(err)
+}
 log.Info("Hello, World!") // Output: myapp/handler/auth.go:42: Hello, World!
 
 // You can also use an empty string, which will show full paths
-log := logging.New("", cfg)
+log, err := logging.New("", cfg)
+if err != nil {
+    panic(err)
+}
 log.Info("Hello, World!") // Output: /home/user/projects/myapp/handler/auth.go:42: Hello, World!
 ```
 
@@ -104,11 +113,22 @@ The logger can be configured using the `Config` struct:
 
 ```go
 type Config struct {
-    Level     string // Log level (DEBUG, INFO, WARN, ERROR)
-    Colored   bool   // Enable colored output
-    AddSource bool   // Include source code reference in logs
+    Level       string // Log level (DEBUG, INFO, WARN, ERROR)
+    Colored     bool   // Enable colored output
+    AddSource   bool   // Include source code reference in logs
+    ForceSyslog bool   // Force syslog severity prefixes
+    TimeFormat  string // Custom time format layout
 }
 ```
+
+- `ForceSyslog`: Forces syslog severity prefixes (`<N>`) on each line and disables colored output. Automatically enabled when using the default writer under systemd's journal.
+- `TimeFormat`: Custom time format layout following Go's reference time convention. Defaults to `[2006-01-02 15:04:05]`.
+
+## Syslog
+
+When using the default writer (nil used no `Writer` provided), the package automatically detects whether it is running under systemd's journal by checking the `JOURNAL_STREAM` environment variable. If detected, syslog severity prefixes (`<N>`) are prepended to each log line and colored output is disabled. This detection only applies when using the default writer to avoid impacting custom writers.
+
+You can also force this behavior manually by setting `ForceSyslog: true` in the configuration.
 
 ## License
 

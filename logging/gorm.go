@@ -26,6 +26,7 @@ package logging
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -35,32 +36,49 @@ import (
 	"gitlab.com/iglou.eu/goulc/hided"
 )
 
+// GormLogger is a GORM logger adapter that wraps slog.Logger to implement
+// gorm's logger.Interface. It formats database messages through the structured
+// logging pipeline.
 type GormLogger struct {
 	*slog.Logger
 }
 
+var _ = logger.Interface(&GormLogger{})
+
+// NewGormLogger creates a new GormLogger from an existing slog.Logger.
 func NewGormLogger(log *slog.Logger) *GormLogger {
 	return &GormLogger{
 		log,
 	}
 }
 
-func (_ *GormLogger) LogMode(_ logger.LogLevel) logger.Interface {
-	return nil
+// LogMode implements logger.Interface but is a no-op; log level is controlled
+// by the underlying slog.Handler.
+func (g *GormLogger) LogMode(_ logger.LogLevel) logger.Interface {
+	return g
 }
 
+// Info logs a database info message, formatting the message and data with
+// fmt.Sprintf.
 func (g *GormLogger) Info(ctx context.Context, msg string, data ...any) {
-	g.InfoContext(ctx, "Database", "message", msg, "data", data)
+	g.InfoContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
+// Warn logs a database warning message, formatting the message and data with
+// fmt.Sprintf.
 func (g *GormLogger) Warn(ctx context.Context, msg string, data ...any) {
-	g.WarnContext(ctx, "Database", "message", msg, "data", data)
+	g.WarnContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
+// Error logs a database error message, formatting the message and data with
+// fmt.Sprintf.
 func (g *GormLogger) Error(ctx context.Context, msg string, data ...any) {
-	g.ErrorContext(ctx, "Database", "message", msg, "data", data)
+	g.ErrorContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
+// Trace logs a database trace including elapsed time, SQL query, and rows
+// affected. Errors other than gorm.ErrRecordNotFound are logged at ERROR level;
+// everything else at DEBUG level.
 func (g *GormLogger) Trace(
 	ctx context.Context, begin time.Time, fc func() (string, int64), err error,
 ) {

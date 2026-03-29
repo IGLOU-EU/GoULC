@@ -25,27 +25,34 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"runtime"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 
 	"gitlab.com/iglou.eu/goulc/logging/model"
 )
 
 const (
-	colorReset        = "\033[0m"
-	colorRed          = "\033[31m"
-	colorCyan         = "\033[36m"
-	colorMagenta      = "\033[35m"
-	colorBrightGrey   = "\033[90m"
-	colorBrightYellow = "\033[93m"
+	// bufferSize is the initial allocation size in bytes for the log
+	// output buffer, chosen to minimize reallocations for typical log lines.
+	bufferSize = 1024
 
-	defaultBufferSize = 1024
+	// maxBufferSize is the maximum capacity a pooled buffer is allowed to
+	// have before being discarded instead of returned to the pool. This
+	// prevents abnormally large log lines from permanently inflating memory.
+	maxBufferSize = 4096
+
+	// defaultTimeFormat is the fallback time layout used when no custom
+	// TimeFormat is specified in HandlerOptions.
+	defaultTimeFormat = "[2006-01-02 15:04:05]"
 )
 
-var TimeFormat = "[2006-01-02 15:04:05]"
+// bufPool is a pool of reusable bytes.Buffer to avoid allocating a new
+// buffer for every log line. Buffers exceeding maxBufferSize are not
+// returned to the pool.
+var bufPool = sync.Pool{
+	New: func() any {
+		return bytes.NewBuffer(make([]byte, 0, bufferSize))
+	},
+}
 
 // Handler implements slog.Handler interface with additional features:
 // - Colored output support with ANSI colors
@@ -53,9 +60,9 @@ var TimeFormat = "[2006-01-02 15:04:05]"
 // - Concurrent-safe logging with mutex protection
 // - Source code location with customizable base path
 type Handler struct {
-	h    slog.Handler
-	w    model.Writer
-	opts HandlerOptions
+	h   slog.Handler
+	w   model.Writer
+	opt HandlerOptions
 
 	group             string
 	preformattedAttrs []string
@@ -64,16 +71,50 @@ type Handler struct {
 	mu     *sync.RWMutex
 }
 
+var _ = slog.Handler(&Handler{})
+
 // HandlerOptions configures the behavior of the Handler.
 type HandlerOptions struct {
-	// Colored enables ANSI color output in log messages
-	Colored bool
-	// AddSource includes the source file and line number in log messages
-	AddSource bool
+	model.Config
+	slog.HandlerOptions
+
 	// BasePath is used to trim the full file path in source code references
 	// For example, if BasePath is "/home/user/project", a source file
 	// "/home/user/project/pkg/file.go" will be shown as "pkg/file.go"
 	BasePath string
+}
+
+// NewHandler creates a new Handler with the given writer and options.
+//   - The writer specifies where to write logs
+//     (separate streams for normal and error logs).
+//   - The opt parameter configures coloring, source code info, and base path.
+//
+// If opt or sopt is nil, default options will be used.
+// The handler is concurrent-safe and implements the slog.Handler interface.
+func NewHandler(
+	cancel context.CancelFunc, w *model.Writer, opt *HandlerOptions,
+) *Handler {
+	var localOpt HandlerOptions
+	if opt != nil {
+		localOpt = *opt
+	}
+
+	if localOpt.ForceSyslog {
+		localOpt.Colored = false
+	}
+
+	if localOpt.TimeFormat == "" {
+		localOpt.TimeFormat = defaultTimeFormat
+	}
+
+	return &Handler{
+		h:   slog.NewTextHandler(w.Out, &localOpt.HandlerOptions),
+		w:   *w,
+		opt: localOpt,
+
+		cancel: cancel,
+		mu:     &sync.RWMutex{},
+	}
 }
 
 // Enabled implements slog.Handler interface and determines if a log level
@@ -85,18 +126,16 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 // WithAttrs implements slog.Handler interface and returns a new Handler with
 // the given attributes added to the set of attributes that will be logged
 // with each log record. The attributes are stored as a slice of strings.
-//
-// Attrs are stored in pr
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// Lock during copy
 	h.mu.RLock()
 
 	// Copy and initialize new handler
 	oldAttrsLen := len(h.preformattedAttrs)
-	new := &Handler{
-		h:    h.h,
-		w:    h.w,
-		opts: h.opts,
+	newHandler := &Handler{
+		h:   h.h,
+		w:   h.w,
+		opt: h.opt,
 
 		group:             h.group,
 		preformattedAttrs: make([]string, oldAttrsLen, oldAttrsLen+len(attrs)),
@@ -106,7 +145,7 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 
 	// Copy existing preformatted attributes
-	copy(new.preformattedAttrs, h.preformattedAttrs)
+	copy(newHandler.preformattedAttrs, h.preformattedAttrs)
 
 	// The copy is done, unlock
 	h.mu.RUnlock()
@@ -114,36 +153,33 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// Add new attributes
 	for _, attr := range attrs {
 		if !attr.Equal(slog.Attr{}) {
-			new.preformattedAttrs = append(new.preformattedAttrs, attr.String())
+			newHandler.preformattedAttrs = append(
+				newHandler.preformattedAttrs, attr.String())
 		}
 	}
 
-	return new
+	return newHandler
 }
 
-// WithGroup returns a new Logger with the given group added to the group stack.
-// groups are dot-separated: if the handler has group "a" and WithGroup("b") is
-// called, the new handler will have group ".a.b".
-//
-// I don't like the regular implementation, there is require more complexity
-// than I need. For grouping, I prefer the usage of anonymous structs, maps
-// or better yet, slog.Group. And it can be combined with WithAttrs.
+// WithGroup returns a new handler with the given group name appended.
+// This implementation uses a simple dot-separated prefix rather than
+// nested group handling, since slog.Group covers most grouping needs.
 func (h *Handler) WithGroup(group string) slog.Handler {
 	h.mu.RLock()
-	new := &Handler{
-		h:    h,
-		w:    h.w,
-		opts: h.opts,
+	newHandler := &Handler{
+		h:   h.h,
+		w:   h.w,
+		opt: h.opt,
 
 		group:             h.group + "." + group,
-		preformattedAttrs: h.preformattedAttrs,
+		preformattedAttrs: append([]string(nil), h.preformattedAttrs...),
 
 		cancel: h.cancel,
 		mu:     &sync.RWMutex{},
 	}
 	h.mu.RUnlock()
 
-	return new
+	return newHandler
 }
 
 // Handle implements slog.Handler interface. It formats and writes a log record.
@@ -155,92 +191,61 @@ func (h *Handler) WithGroup(group string) slog.Handler {
 // - Is concurrent-safe through mutex protection
 func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	// Set colors if enabled
-	var cLevel, cReset, cAttrs string
-	if h.opts.Colored {
-		cReset = colorReset
-		cAttrs = colorBrightGrey
-
-		switch r.Level {
-		case slog.LevelDebug:
-			cLevel = colorBrightGrey
-		case slog.LevelInfo:
-			cLevel = colorCyan
-		case slog.LevelWarn:
-			cLevel = colorBrightYellow
-		case slog.LevelError:
-			cLevel = colorRed
-		default:
-			cLevel = colorMagenta
-		}
+	var colorLevel color
+	if h.opt.Colored {
+		colorLevel = setColorLevel(r.Level)
 	}
 
-	// Init buffer
-	buf := bytes.NewBuffer(nil)
-	buf.Grow(defaultBufferSize) // Allocate a default size
+	// Get a buffer from the pool
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
+	// Add syslog prefix
+	h.writeSyslogPrefix(buf, r.Level)
 
 	// Date and time
-	buf.WriteString(time.Now().Format(TimeFormat))
-	buf.WriteRune(' ')
+	buf.WriteString(r.Time.Format(h.opt.TimeFormat))
+	buf.WriteByte(' ')
 
 	// Level
-	buf.WriteRune('[')
-	buf.WriteString(cLevel)
-	buf.WriteString(r.Level.String())
-	buf.WriteString(cReset)
-	buf.WriteRune(']')
-	buf.WriteRune(' ')
+	buf.WriteByte('[')
+	h.colorize(buf, colorLevel, r.Level.String())
+	buf.WriteByte(']')
+	buf.WriteByte(' ')
 
 	// Prefix
 	if h.group != "" {
-		buf.WriteRune('[')
+		buf.WriteByte('[')
 		buf.WriteString("G:")
-		buf.WriteString(cLevel)
-		buf.WriteString(h.group)
-		buf.WriteString(cReset)
-		buf.WriteRune(']')
-		buf.WriteRune(' ')
+		h.colorize(buf, colorLevel, h.group)
+		buf.WriteByte(']')
+		buf.WriteByte(' ')
 	}
 
 	// Source
-	if h.opts.AddSource {
-		s := source(h.opts.BasePath, r.PC)
+	if h.opt.Config.AddSource {
+		s := source(h.opt.BasePath, r.PC)
 		if s.File == "" {
 			s.File = "???"
 		}
 
-		buf.WriteString(cAttrs)
-		buf.WriteString(s.File)
-		buf.WriteRune(':')
-		buf.WriteString(strconv.Itoa(s.Line))
-		buf.WriteRune(':')
-		buf.WriteString(cReset)
-		buf.WriteRune(' ')
+		h.colorize(buf, colorBrightGrey, sourceBuilder(s.File, s.Line))
 	}
 
 	// Message
 	buf.WriteString(r.Message)
 
-	// Attributes
-	buf.WriteString(cAttrs)
-
 	// Write preformatted attributes
 	for _, a := range h.preformattedAttrs {
-		buf.WriteRune('\n')
-		buf.WriteString("	- " + a)
+		h.writeAttributes(buf, r.Level, a)
 	}
 
 	// Write recorded attributes
 	r.Attrs(func(a slog.Attr) bool {
-		buf.WriteRune('\n')
-		buf.WriteString(
-			"	- " + a.String(),
-		)
-
-		return true
+		return h.writeAttributes(buf, r.Level, a.String())
 	})
 
-	buf.WriteString(cReset)
-	buf.WriteString("\n")
+	buf.WriteByte('\n')
 
 	// Set output
 	output := h.w.Out
@@ -252,6 +257,12 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	_, err := output.Write(buf.Bytes())
 	h.mu.Unlock() // defer is expensive, not required in this case
+
+	// Return the buffer to the pool if it hasn't grown too large,
+	// otherwise let the GC collect it.
+	if buf.Cap() <= maxBufferSize {
+		bufPool.Put(buf)
+	}
 
 	return err
 }
@@ -270,50 +281,36 @@ func (h *Handler) Cancel() bool {
 	return true
 }
 
-// NewHandler creates a new Handler with the given writer and options.
-//   - The writer specifies where to write logs
-//     (separate streams for normal and error logs).
-//   - The opts parameter configures coloring, source code info, and base path.
-//   - The sopts parameter configures slog-specific handler options.
-//
-// If opts or sopts is nil, default options will be used.
-// The handler is concurrent-safe and implements the slog.Handler interface.
-func NewHandler(
-	cancel context.CancelFunc, w *model.Writer,
-	opts *HandlerOptions, sopts *slog.HandlerOptions,
-) *Handler {
-	if opts == nil {
-		opts = &HandlerOptions{}
+// colorize writes s to b wrapped in the given ANSI color code.
+// If colored output is disabled, the string is written as-is.
+func (h *Handler) colorize(b *bytes.Buffer, c color, s string) {
+	if !h.opt.Colored {
+		b.WriteString(s)
+		return
 	}
 
-	if sopts == nil {
-		sopts = &slog.HandlerOptions{}
-	}
+	b.WriteString(string(c))
+	b.WriteString(s)
+	b.WriteString(string(colorReset))
+}
 
-	if opts.AddSource {
-		if pos := strings.Index(opts.BasePath, "cmd"); pos > 0 {
-			opts.BasePath = opts.BasePath[:pos]
-		}
-	}
-
-	return &Handler{
-		h:    slog.NewTextHandler(w.Out, sopts),
-		w:    *w,
-		opts: *opts,
-
-		cancel: cancel,
-		mu:     &sync.RWMutex{},
+// writeSyslogPrefix prepends a syslog severity prefix to the buffer
+// when ForceSyslog is enabled.
+func (h *Handler) writeSyslogPrefix(b *bytes.Buffer, l slog.Level) {
+	if h.opt.ForceSyslog {
+		b.WriteString(BuildSyslogPrefix(l))
 	}
 }
 
-// source returns a Source describing the caller's source code position.
-// It trims the file path using basePath to make it more readable.
-func source(basePath string, pc uintptr) *slog.Source {
-	fs := runtime.CallersFrames([]uintptr{pc})
-	f, _ := fs.Next()
-	return &slog.Source{
-		Function: f.Function,
-		File:     strings.TrimPrefix(f.File, basePath),
-		Line:     f.Line,
-	}
+// writeAttributes writes a single attribute line to the buffer, prefixed with
+// a syslog header (if enabled) and styled in bright grey. It always returns
+// true to satisfy the slog.Record.Attrs callback signature.
+func (h *Handler) writeAttributes(
+	b *bytes.Buffer, l slog.Level, s string,
+) bool {
+	b.WriteByte('\n')
+	h.writeSyslogPrefix(b, l)
+	h.colorize(b, colorBrightGrey, "\t- "+s)
+
+	return true
 }

@@ -30,13 +30,21 @@ import (
 // Config defines the configuration options for the logger.
 // It controls the logging level, output coloring, and source code information.
 type Config struct {
-	// Level defines the minimum logging level
-	// ("DEBUG", "INFO", "WARN", "ERROR")
-	Level string `json:"level"`
 	// Colored enables ANSI color output in log messages
 	Colored bool `json:"colored"`
 	// AddSource includes the source file and line number in log messages
 	AddSource bool `json:"add_source"`
+	// ForceSyslog prepends syslog severity prefixes (e.g. <6>) to each
+	// log line and disables colored output.
+	ForceSyslog bool `json:"force_syslog"`
+
+	// Level defines the minimum logging level
+	// ("DEBUG", "INFO", "WARN", "ERROR")
+	Level string `json:"level"`
+	// TimeFormat defines the layout string passed to time.Format for
+	// formatting timestamps in log messages. It must follow Go's reference
+	// time layout convention (Mon Jan 2 15:04:05 MST 2006).
+	TimeFormat string `json:"time_format"`
 
 	// Cancel is a context.CancelFunc used to cancel a global context
 	// in case of critical errors
