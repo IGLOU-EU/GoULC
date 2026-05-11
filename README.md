@@ -54,6 +54,12 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
 
 See the [HTTP package documentation](http/README.md).
 
+### 📄 JSONL Package
+
+A Go package for handling JSON Lines (JSONL) data. It provides simple and efficient parsing and formatting capabilities for JSONL serialization and deserialization using generics.
+
+See the [jsonl package documentation](jsonl/README.md).
+
 ### 📝 Logging
 
 A light and flexible logging package built on top of `log/slog` that supports multiple output handlers, log levels, and framework integrations.
