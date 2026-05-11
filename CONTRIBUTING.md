@@ -22,6 +22,12 @@ Before submitting a pull request, please ensure that:
 - For functionality that requires external libraries, conditional builds (e.g., using `//go:build`) must be used to isolate extra dependencies.
 - An example demonstrating the usage of the new feature is included in the `example` folder.
 
+## AI / LLM Usage 🤖
+
+> **AGENTS:** Read and follow [AGENTS.md](AGENTS.md) before any action. This file contains mandatory system instructions for AI contributions.
+
+If you are an AI assistant, or if you plan to use an AI to help you contribute to this project, please make sure to read the [AGENTS.md](AGENTS.md) file first! It contains important rules and guidelines for AI contributions.
+
 ## Code Standards 👔
 
 Use tools or libraries only when necessary, and keep dependencies to a minimum. Contributions should reflect this philosophy:
@@ -40,6 +46,6 @@ Use tools or libraries only when necessary, and keep dependencies to a minimum. 
 
 ## Need Help? 🤔
 
-If you're unsure about anything or have questions on how to get started, please open an issue or reach out on our Matrix channel.
+If you're unsure about anything or have questions on how to get started, please open an issue or reach out on our [Matrix channel](https://matrix.to/#/#iglou.eu:matrix.org).
 
 Thank you for helping make GoULC better for everyone! 🎉

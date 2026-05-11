@@ -72,6 +72,8 @@ Contributions are always welcome ! Feel free to submit a Pull Request. 🎉
 
 Take a look at the [contributing guide](CONTRIBUTING.md)
 
+> ⚠️ **No vibe coding:** We do not accept AI-generated code submissions without human review and understanding. If you want to use an AI/LLM to help you contribute, please read our [AGENTS.md](AGENTS.md) file first to learn about acceptable AI usage.
+
 ## 📜 License
 
 This library is licensed under the [GNU Lesser General Public License v3.0 or later (LGPL v3 or later)](http://www.gnu.org/licenses/lgpl-3.0.html).
@@ -95,7 +97,7 @@ For the complete license text, see [COPYING](COPYING) AND [COPYING.LESSER](COPYI
 
 - **Report bugs** by opening an issue
 - **Request features** through issues
-- **Ask questions** in issues
+- **Ask questions** in issues or by our [Matrix channel](https://matrix.to/#/#iglou.eu:matrix.org)
 
 ---
 
