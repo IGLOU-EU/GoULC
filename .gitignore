@@ -1,2 +1,6 @@
 test.db
-app.log
+*.log
+*.test
+
+.TODO/*
+.vscode/*
