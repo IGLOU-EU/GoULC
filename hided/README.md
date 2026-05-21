@@ -18,6 +18,12 @@ A Go package to prevent sensitive data leakage from logs, error messages, and an
   - Implements the `Hider` interface with `Value` for accessing the underlying data.
   - `HashMD5` for hash-based obfuscation comparison.
 
+- **🧬 Generic Accessor:**
+  - `hided.Value[T](h Hider) T` returns the underlying value asserted to `T`.
+  - Type-safe alternative to `h.Value().(T)`: no panic on mismatch, no
+    comma-ok boilerplate. On a type mismatch the zero value of `T` is
+    returned. Example: `pwd := hided.Value[string](myHidedSecret)`.
+
 - **🔥 Gorm Integration:**
   - Custom Gorm-enabled string type (`GormString`) to use with `gorm.Valuer` and a custom `GormHider` interface.
   - Allows both clear and obfuscated representations for ORM operations.

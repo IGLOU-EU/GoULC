@@ -47,3 +47,18 @@ type Hider interface {
 	// Value returns the underlying value
 	Value() any
 }
+
+// Value returns the underlying value of h asserted to T. If the underlying
+// value is not of type T, the zero value of T is returned.
+//
+// It is a type-safe alternative to a raw type assertion on Hider.Value(),
+// avoiding both the panic of a single-return assertion and the boilerplate
+// of the comma-ok idiom on every call site.
+func Value[T any](h Hider) T {
+	if v, ok := h.Value().(T); ok {
+		return v
+	}
+
+	var empty T
+	return empty
+}

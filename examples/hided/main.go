@@ -28,4 +28,9 @@ func main() {
 
 	// Value() is the ONLY way to access the real value
 	fmt.Printf("I need to use it! batcavePass(%v) \n", myHidedSecretKey.Value())
+
+	// hided.Value[T] is a type-safe alternative to Value() + type assertion.
+	// It returns the zero value of T on a type mismatch instead of panicking.
+	batcode := hided.Value[string](myHidedSecretKey)
+	fmt.Printf("Type-safe access: batcavePass(%s)\n", batcode)
 }

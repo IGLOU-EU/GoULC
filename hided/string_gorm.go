@@ -39,7 +39,7 @@ var _ = GormHider(GormString(""))
 func (s String) GormValue(_ context.Context, _ *gorm.DB) clause.Expr {
 	return clause.Expr{
 		SQL:  "?",
-		Vars: []any{GormString(s.Value().(string))},
+		Vars: []any{GormString(Value[string](s))},
 	}
 }
 
