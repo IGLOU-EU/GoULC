@@ -66,6 +66,12 @@ A light and flexible logging package built on top of `log/slog` that supports mu
 
 See the [logging package documentation](logging/README.md).
 
+### 🃏 Wildcard
+
+A simple and fast wildcard pattern matching package, supporting `*`, `?`, and `.` operators. It's a lightweight alternative to regex (not tied to filename semantics like `filepath.Match`), with no dependencies and an allocation-free byte path.
+
+See the [wildcard package documentation](wildcard/README.md).
+
 ## 🤝 Contributing
 
 Contributions are always welcome ! Feel free to submit a Pull Request. 🎉
