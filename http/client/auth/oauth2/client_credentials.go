@@ -31,6 +31,7 @@ import (
 
 	net_http "net/http"
 
+	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
@@ -141,7 +142,7 @@ func (g *ClientCredentials) Update() error {
 func (g *ClientCredentials) Header(_ string, _ *url.URL, _ []byte,
 ) (headerKey, headerValue string, err error) {
 	return ClientCredentialsHeaderName,
-		ClientCredentialsHeaderPrefix + g.Token.Token.Value().(string),
+		ClientCredentialsHeaderPrefix + hided.Value[string](g.Token.Token),
 		nil
 }
 
@@ -180,12 +181,12 @@ func (g *ClientCredentials) newToken() error {
 	// Add auth to body if requested
 	if g.ClientAuth == ClientInBody {
 		data.Set("client_id", g.Config.ClientID)
-		data.Set("client_secret", g.Config.ClientSecret.Value().(string))
+		data.Set("client_secret", hided.Value[string](g.Config.ClientSecret))
 	}
 
 	// RFC 6749 §4.4.1: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.1
 	c.Header.Set("Authorization", "Basic "+auth.BasicUserPass(
-		g.Config.ClientID, g.Config.ClientSecret.Value().(string)))
+		g.Config.ClientID, hided.Value[string](g.Config.ClientSecret)))
 	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
 	c.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 

@@ -85,7 +85,7 @@ func (_ *Basic) Update() error {
 func (b *Basic) Header(_ string, _ *url.URL, _ []byte,
 ) (headerKey, headerValue string, err error) {
 	return BasicHeaderName, BasicValuePrefix +
-		BasicUserPass(b.UserID, b.Password.Value().(string)), nil
+		BasicUserPass(b.UserID, hided.Value[string](b.Password)), nil
 }
 
 // Clone creates a deep copy of the instance.
