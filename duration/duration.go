@@ -28,10 +28,13 @@ package duration
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"gitlab.com/iglou.eu/goulc/contract"
 )
 
 var (
@@ -49,6 +52,17 @@ var (
 type Duration struct {
 	time.Duration
 }
+
+// Compile-time conformance proofs, so any signature drift breaks the
+// build. fmt.Stringer is promoted from the embedded time.Duration.
+var (
+	_ json.Marshaler           = Duration{}
+	_ json.Unmarshaler         = (*Duration)(nil)
+	_ encoding.TextMarshaler   = Duration{}
+	_ encoding.TextUnmarshaler = (*Duration)(nil)
+	_ fmt.Stringer             = Duration{}
+	_ contract.IsZeroer        = Duration{}
+)
 
 // New wraps a time.Duration in a Duration.
 func New(d time.Duration) Duration {
@@ -86,11 +100,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		}
 		d.Duration = time.Duration(ns)
 	case string:
-		var err error
-		d.Duration, err = time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("%w: %q: %w", ErrBadDuration, value, err)
-		}
+		return d.UnmarshalText([]byte(value))
 	default:
 		return ErrDurationInvalidType
 	}
@@ -103,6 +113,32 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 // time.ParseDuration.
 func (d Duration) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + d.String() + `"`), nil
+}
+
+// MarshalText implements the encoding.TextMarshaler interface, so a
+// Duration can be used where a text form is expected, such as a JSON map
+// key. The output is the time.Duration.String format.
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface. The
+// text is parsed with time.ParseDuration.
+func (d *Duration) UnmarshalText(text []byte) error {
+	parsed, err := time.ParseDuration(string(text))
+	if err != nil {
+		return fmt.Errorf("%w: %q: %w", ErrBadDuration, text, err)
+	}
+
+	d.Duration = parsed
+
+	return nil
+}
+
+// IsZero reports whether the duration is zero. encoding/json relies on it
+// to honor the ",omitzero" struct tag option (Go 1.24+).
+func (d Duration) IsZero() bool {
+	return d.Duration == 0
 }
 
 // ToTimeDuration returns the underlying time.Duration value.

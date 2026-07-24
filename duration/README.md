@@ -8,6 +8,8 @@ A Go package for handling time durations with JSON support. It wraps the standar
 
 - **🔌 Interfacing**:
   - JSON Marshaler/Unmarshaler for duration values
+  - Text Marshaler/Unmarshaler, enabling use as JSON map keys or with `flag.TextVar`
+  - `IsZero` support for the JSON `omitzero` tag option (Go 1.24+)
   - Seamless integration with Go's `time.Duration`
   - Support for multiple input formats
 
