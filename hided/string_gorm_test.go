@@ -116,3 +116,141 @@ func TestGormValueFromEmptyString(t *testing.T) {
 		t.Errorf("GormValue empty: String() = %q, want %q", gs.String(), "")
 	}
 }
+
+// gormSecretModel is the schema used by the real-database round-trip tests.
+type gormSecretModel struct {
+	ID     uint
+	Secret String
+}
+
+// TestGormRoundTrip verifies the full gorm integration against a real sqlite
+// database: schema parsing, Create persisting the REAL secret (not the
+// obfuscated placeholder), and First reading it back into a String.
+func TestGormRoundTrip(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open gorm db: %v", err)
+	}
+
+	if err := db.AutoMigrate(&gormSecretModel{}); err != nil {
+		t.Fatalf("AutoMigrate() error: %v", err)
+	}
+
+	const secret = "S3cret-roundtrip"
+
+	in := gormSecretModel{Secret: NewString(secret)}
+	if err := db.Create(&in).Error; err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	// The real secret must be stored in the database. The dangerous
+	// serializer:json workaround silently persisted "***" instead.
+	var raw string
+	err = db.Raw(
+		"SELECT secret FROM gorm_secret_models WHERE id = ?", in.ID,
+	).Scan(&raw).Error
+	if err != nil {
+		t.Fatalf("raw SELECT error: %v", err)
+	}
+	if raw != secret {
+		t.Errorf("stored raw value = %q, want %q", raw, secret)
+	}
+
+	var out gormSecretModel
+	if err := db.First(&out, in.ID).Error; err != nil {
+		t.Fatalf("First() error: %v", err)
+	}
+
+	if got := out.Secret.Reveal(); got != secret {
+		t.Errorf("read-back Reveal() = %q, want %q", got, secret)
+	}
+
+	// The value read back from the database must still obfuscate everywhere.
+	if got := fmt.Sprint(out.Secret); got != obfuscated {
+		t.Errorf("read-back fmt.Sprint = %q, want %q", got, obfuscated)
+	}
+}
+
+// TestGormRoundTripEmpty verifies that an empty secret survives the
+// database round-trip.
+func TestGormRoundTripEmpty(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open gorm db: %v", err)
+	}
+
+	if err := db.AutoMigrate(&gormSecretModel{}); err != nil {
+		t.Fatalf("AutoMigrate() error: %v", err)
+	}
+
+	in := gormSecretModel{Secret: NewString("")}
+	if err := db.Create(&in).Error; err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	var out gormSecretModel
+	if err := db.First(&out, in.ID).Error; err != nil {
+		t.Fatalf("First() error: %v", err)
+	}
+
+	if !out.Secret.IsEmpty() {
+		t.Errorf("read-back IsEmpty() = false, want true")
+	}
+}
+
+// TestStringScan verifies the sql.Scanner contract on *String for every
+// source type a driver may hand over, including unsupported ones.
+func TestStringScan(t *testing.T) {
+	tests := []struct {
+		name      string
+		give      any
+		want      string
+		shouldErr bool
+	}{
+		{name: "string", give: "from-string", want: "from-string"},
+		{name: "bytes", give: []byte("from-bytes"), want: "from-bytes"},
+		{name: "nil", give: nil, want: ""},
+		{name: "empty-string", give: "", want: ""},
+		{name: "int64-unsupported", give: int64(42), shouldErr: true},
+		{name: "bool-unsupported", give: true, shouldErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s String
+			err := s.Scan(tt.give)
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Scan(%v) error = nil, want error", tt.give)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Scan(%v) error: %v", tt.give, err)
+			}
+			if got := s.Reveal(); got != tt.want {
+				t.Errorf("after Scan(%v): Reveal() = %q, want %q", tt.give, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStringScanCopiesBytes verifies that Scan copies driver-owned []byte
+// memory, as required by the sql.Scanner documentation.
+func TestStringScanCopiesBytes(t *testing.T) {
+	src := []byte("driver-owned")
+
+	var s String
+	if err := s.Scan(src); err != nil {
+		t.Fatalf("Scan() error: %v", err)
+	}
+
+	// The driver reuses its buffer after Scan returns.
+	copy(src, "clobbered!!!")
+
+	if got := s.Reveal(); got != "driver-owned" {
+		t.Errorf("after driver buffer reuse: Reveal() = %q, want %q", got, "driver-owned")
+	}
+}
