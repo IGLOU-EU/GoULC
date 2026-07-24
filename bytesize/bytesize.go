@@ -30,7 +30,7 @@
 //   - Converting between different units
 //   - Basic arithmetic operations on sizes
 //   - Handling negative and floating-point values
-//   - Range limited to what int64 can represent (approximately 9 EiB)
+//   - Range limited to what int64 can represent (approximately 8 EiB)
 package bytesize
 
 import (
@@ -79,9 +79,8 @@ const (
 	TebiSymbol = "TiB" // Tebibyte
 	PebiSymbol = "PiB" // Pebibyte
 
-	percent  = 100
-	bitSize  = 64
-	exponent = 10
+	percent = 100
+	bitSize = 64
 )
 
 // Sentinel errors returned by Parse and the Size methods.
@@ -168,11 +167,12 @@ func Parse(s string) (
 		return 0, 0, "0B", nil
 	}
 
-	// Find the position of the first uppercase letter
-	// To split the size and the symbol (if any)
+	// Find the position of the first uppercase letter to split the size
+	// and the symbol (if any). Every IEC symbol starts with an uppercase
+	// ASCII letter, including the bare "B" byte unit.
 	runePos := -1
 	for i := range s {
-		if s[i] < 'G' || s[i] > 'Z' {
+		if s[i] < 'A' || s[i] > 'Z' {
 			continue
 		}
 
@@ -199,8 +199,13 @@ func Parse(s string) (
 		return 0, 0, "", err
 	}
 
-	// Without a symbol we assume it's in bytes
+	// Without a symbol we assume it's in bytes. The range check also
+	// rejects non-finite values (NaN, +/-Inf) accepted by ParseFloat.
 	if symbolRaw == "" {
+		if err := integerOverflow(size); err != nil {
+			return 0, 0, "", err
+		}
+
 		return int64(size), size, ToString(size), nil
 	}
 
@@ -222,7 +227,15 @@ func Parse(s string) (
 
 // ToString returns a string representing the Size value in IEC format.
 // It uses the most appropriate unit to keep the number human-readable.
+// Non-finite values cannot be expressed in IEC units and are formatted
+// as "+Inf", "-Inf" or "NaN".
 func ToString(b float64) string {
+	// Rejecting non-finite values up front keeps the unit selection loop
+	// bounded, an infinite input would otherwise never divide down.
+	if math.IsInf(b, 0) || math.IsNaN(b) {
+		return strconv.FormatFloat(b, 'f', -1, bitSize)
+	}
+
 	if b == 0 {
 		return "0" + ByteSymbol
 	}
@@ -374,15 +387,20 @@ func exponentFromSymbol(symbol string) (int, error) {
 	return 0, ErrInvalidIEC
 }
 
-// integerOverflow checks if a byte size value exceeds the maximum
-// representable value. This is used to prevent integer overflow when working
-// with large sizes. The maximum value is slightly less than 9 EiB
-// (9 * 2^60 bytes), which is the largest value that can be safely
-// represented by an int64.
+// integerOverflow checks whether a byte size value can be represented as an
+// int64, whose range tops out just below 8 EiB (2^63 bytes). Values outside
+// that range and non-finite values (NaN, +/-Inf) are rejected, so a checked
+// value is always safe to convert with int64().
 //
-// Returns ErrIntegerOverflow if the size is too large, nil otherwise.
+// Returns ErrIntegerOverflow if the size is not representable, nil otherwise.
 func integerOverflow(size float64) error {
-	if math.Ldexp(size, exponent) >= 1<<bitSize {
+	// float64(math.MaxInt64) rounds up to exactly 2^63, one past the last
+	// valid int64, so the upper bound must be exclusive. The lower bound
+	// float64(math.MinInt64) is exactly -2^63, a valid int64, and stays
+	// inclusive. NaN is rejected explicitly because it escapes every
+	// ordered comparison.
+	if math.IsNaN(size) ||
+		size >= float64(math.MaxInt64) || size < float64(math.MinInt64) {
 		return ErrIntegerOverflow
 	}
 
