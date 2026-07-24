@@ -21,9 +21,12 @@ A Go package to prevent sensitive data leakage from logs, error messages, and an
 
 - **🧬 Generic Accessor:**
   - `hided.Value[T](h Hider) T` returns the underlying value asserted to `T`.
-  - Type-safe alternative to `h.Value().(T)`: no panic on mismatch, no
-    comma-ok boilerplate. On a type mismatch the zero value of `T` is
-    returned. Example: `pwd := hided.Value[string](myHidedSecret)`.
+  - Type-safe alternative to `h.Value().(T)`: no panic, no comma-ok
+    boilerplate. On a nil `Hider` or a type mismatch the zero value of `T`
+    is returned. Example: `pwd := hided.Value[string](myHidedSecret)`.
+  - The zero value on mismatch is **silent by design**. On paths where an
+    empty secret must not pass for a valid one (authentication,
+    credentials), check `IsEmpty()` before using the result.
 
 - **🔥 Gorm Integration** (build tag `gorm`):
   - `hided.String` works as a model field out of the box: `GormDataType()` maps it to the dialect's string column type, `GormValue()` writes the **real** secret as a bind parameter, and `Scan()` reads it back from the database.

@@ -106,6 +106,22 @@ func TestValueGeneric(t *testing.T) {
 			t.Errorf("Value[string] on intHider = %q, want \"\" (zero value)", got)
 		}
 	})
+
+	// The documented contract is "no panic", so a nil Hider must yield the
+	// zero value of T instead of a nil interface dereference.
+	t.Run("nil-hider-returns-zero-string", func(t *testing.T) {
+		got := Value[string](nil)
+		if got != "" {
+			t.Errorf("Value[string](nil) = %q, want \"\" (zero value)", got)
+		}
+	})
+
+	t.Run("nil-hider-returns-zero-int", func(t *testing.T) {
+		got := Value[int](nil)
+		if got != 0 {
+			t.Errorf("Value[int](nil) = %d, want 0 (zero value)", got)
+		}
+	})
 }
 
 // TestHiderInterfaceCompliance verifies that the canonical hided types
