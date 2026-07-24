@@ -8,7 +8,7 @@ A Go package for validating and checking ASCII string properties. It provides si
 
 - **📝 ASCII Validation:**
   - `Is` - Check for Standard ASCII (0-127) validation
-  - `IsPrintable` - Check for printable ASCII characters
+  - `IsPrintable` - Check for printable ASCII characters (32-126, DEL excluded)
   - `IsExtended` - Check for extended ASCII characters
   - `HasNil` - Detect null bytes
 

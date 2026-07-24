@@ -27,6 +27,22 @@ var tests = []struct {
 		wantHasNil:      false,
 	},
 	{
+		name:            "highest printable character",
+		str:             "~",
+		wantIs:          true,
+		wantIsPrintable: true,
+		wantIsExtended:  true,
+		wantHasNil:      false,
+	},
+	{
+		name:            "DEL control character",
+		str:             "Game over\x7fman",
+		wantIs:          true,
+		wantIsPrintable: false,
+		wantIsExtended:  true,
+		wantHasNil:      false,
+	},
+	{
 		name:            "emoji reaction",
 		str:             "Use the Force 🚀 of emoji",
 		wantIs:          false,
