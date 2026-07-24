@@ -50,11 +50,6 @@ func TestGormStringHiding(t *testing.T) {
 	}
 }
 
-// TestGormStringImplementsGormHider verifies the interface compliance.
-func TestGormStringImplementsGormHider(t *testing.T) {
-	var _ GormHider = GormString("")
-}
-
 // TestGormValueExpr verifies that String.GormValue returns a clause.Expr
 // with the correct SQL and the value wrapped as GormString.
 func TestGormValueExpr(t *testing.T) {

@@ -23,9 +23,12 @@ package hided
 
 import (
 	"crypto/md5"
+	"encoding"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
+	"gitlab.com/iglou.eu/goulc/contract"
 )
 
 // String holds sensitive data and implements obfuscation.
@@ -34,9 +37,20 @@ type String struct {
 	val []byte
 }
 
-var _ = Hider(String{})
-var _ = json.Marshaler(String{})
-var _ = json.Unmarshaler(&String{})
+// Compile-time conformance assertions. Format is the anti-leak guard: every
+// fmt verb goes through it, so a signature drift must break the build.
+var (
+	_ Hider                    = String{}
+	_ fmt.Stringer             = String{}
+	_ fmt.GoStringer           = String{}
+	_ fmt.Formatter            = String{}
+	_ json.Marshaler           = String{}
+	_ json.Unmarshaler         = (*String)(nil)
+	_ encoding.TextMarshaler   = String{}
+	_ encoding.TextUnmarshaler = (*String)(nil)
+	_ contract.IsZeroer        = String{}
+	_ contract.Emptier         = String{}
+)
 
 // NewString creates a new String from the given plaintext.
 func NewString(s string) String {
@@ -90,11 +104,16 @@ func (s String) Reveal() string {
 }
 
 // MarshalJSON implements json.Marshaler to prevent leaks in JSON output.
+//
+// Marshaling is lossy by design: it emits the placeholder, so unmarshaling
+// its own output stores "***" instead of the original secret. Serialized
+// hided values cannot round-trip.
 func (_ String) MarshalJSON() ([]byte, error) {
 	return json.Marshal(obfuscated)
 }
 
-// MarshalText implements encoding.TextMarshaler to prevent leaks in text output.
+// MarshalText implements encoding.TextMarshaler to prevent leaks in text
+// output. Like MarshalJSON, it is lossy by design and cannot round-trip.
 func (_ String) MarshalText() ([]byte, error) {
 	return []byte(obfuscated), nil
 }

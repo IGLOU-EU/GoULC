@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -318,6 +319,68 @@ func TestMarshalText(t *testing.T) {
 
 	if string(data) != obfuscated {
 		t.Errorf("MarshalText() = %q, want %q", string(data), obfuscated)
+	}
+}
+
+// TestMarshalUnmarshalRoundTripIsLossy verifies that the JSON round-trip is
+// lossy by design: MarshalJSON emits the placeholder, so unmarshaling its
+// own output stores "***" instead of the original secret.
+func TestMarshalUnmarshalRoundTripIsLossy(t *testing.T) {
+	orig := NewString("the-real-secret")
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("json.Marshal() error: %v", err)
+	}
+
+	var back String
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
+
+	if got := back.Reveal(); got != obfuscated {
+		t.Errorf("round-tripped value = %q, want %q (lossy by design)", got, obfuscated)
+	}
+}
+
+// TestFormatPointer verifies that a *String does not leak through any fmt
+// verb: value-receiver methods promote to the pointer, so Format applies.
+func TestFormatPointer(t *testing.T) {
+	s := NewString("ptr-secret")
+	p := &s
+
+	verbs := []string{"%v", "%s", "%+v", "%#v", "%q"}
+	for _, verb := range verbs {
+		t.Run(verb, func(t *testing.T) {
+			got := fmt.Sprintf(verb, p)
+			if got != obfuscated {
+				t.Errorf("fmt.Sprintf(%q, &s) = %q, want %q", verb, got, obfuscated)
+			}
+		})
+	}
+}
+
+// TestFormatNested verifies that a String nested in a struct, by value or by
+// pointer, does not leak through %v, %+v, or %#v.
+func TestFormatNested(t *testing.T) {
+	type wrap struct {
+		Secret String
+		Ptr    *String
+	}
+
+	s := NewString("nested-secret")
+	w := wrap{Secret: s, Ptr: &s}
+
+	for _, verb := range []string{"%v", "%+v", "%#v"} {
+		t.Run(verb, func(t *testing.T) {
+			got := fmt.Sprintf(verb, w)
+			if strings.Contains(got, "nested-secret") {
+				t.Errorf("fmt.Sprintf(%q, wrap) = %q, leaks the secret", verb, got)
+			}
+			if !strings.Contains(got, obfuscated) {
+				t.Errorf("fmt.Sprintf(%q, wrap) = %q, want it to contain %q", verb, got, obfuscated)
+			}
+		})
 	}
 }
 
