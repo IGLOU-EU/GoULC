@@ -24,11 +24,16 @@ package duration
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
 var (
-	ErrBadDuration         = errors.New("failed to parse duration")
+	// ErrBadDuration wraps any parse failure of a duration value, so
+	// callers can match it with errors.Is.
+	ErrBadDuration = errors.New("invalid duration")
+	// ErrDurationInvalidType reports a JSON value whose type cannot
+	// represent a duration.
 	ErrDurationInvalidType = errors.New(
 		"invalid JSON duration type, it should be a number or a string")
 )
@@ -58,7 +63,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		var err error
 		d.Duration, err = time.ParseDuration(value)
 		if err != nil {
-			return errors.Join(ErrBadDuration, errors.New("value: "+value), err)
+			return fmt.Errorf("%w: %q: %w", ErrBadDuration, value, err)
 		}
 	default:
 		return ErrDurationInvalidType
