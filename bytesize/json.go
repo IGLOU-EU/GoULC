@@ -26,9 +26,10 @@ import (
 	"errors"
 )
 
-const (
-	ErrJSONInvalidType = "invalid JSON byte Size type, it should be a string or a number"
-)
+// ErrJSONInvalidType reports a JSON value that is neither a string nor a
+// number. Callers match it with errors.Is.
+var ErrJSONInvalidType = errors.New(
+	"invalid JSON byte size type, it should be a string or a number")
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (d *Size) UnmarshalJSON(b []byte) error {
@@ -49,7 +50,7 @@ func (d *Size) UnmarshalJSON(b []byte) error {
 			return err
 		}
 	default:
-		return errors.New(ErrJSONInvalidType)
+		return ErrJSONInvalidType
 	}
 
 	return nil

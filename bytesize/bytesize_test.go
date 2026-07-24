@@ -1,6 +1,8 @@
 package bytesize_test
 
 import (
+	"errors"
+	"strconv"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/bytesize"
@@ -25,7 +27,7 @@ func Test_Parse(t *testing.T) {
 		wInt    int64
 		wFloat  float64
 		wString string
-		wErr    string
+		wErr    error
 	}{
 		{
 			name:    "empty string",
@@ -99,7 +101,7 @@ func Test_Parse(t *testing.T) {
 		{
 			name:  "invalid numeric value",
 			input: "a Byte",
-			wErr:  `strconv.ParseFloat: parsing "a Byte": invalid syntax`,
+			wErr:  strconv.ErrSyntax,
 		},
 		{
 			name:  "invalid unit",
@@ -117,8 +119,7 @@ func Test_Parse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gInt, gFloat, gString, err := bytesize.Parse(tt.input)
 
-			if (err != nil) != (tt.wErr != "") ||
-				(err != nil && err.Error() != tt.wErr) {
+			if !errors.Is(err, tt.wErr) {
 				t.Errorf("Error does not match = %v, expected = %v", err, tt.wErr)
 				return
 			}
@@ -214,8 +215,8 @@ func Test_Add(t *testing.T) {
 		inSTR  string
 		inINT  int64
 		want   string
-		errSTR string
-		errINT string
+		errSTR error
+		errINT error
 	}{
 		{
 			name:  "zero value",
@@ -268,13 +269,12 @@ func Test_Add(t *testing.T) {
 			main, _ := bytesize.New(tt.base)
 
 			err := main.Add(tt.inSTR)
-			if (err != nil) != (tt.errSTR != "") ||
-				(err != nil && err.Error() != tt.errSTR) {
+			if !errors.Is(err, tt.errSTR) {
 				t.Errorf("STR Add error does not match = %v, expected = %v", err, tt.errSTR)
 				return
 			}
 
-			if (tt.errSTR == "") && main.String() != tt.want {
+			if tt.errSTR == nil && main.String() != tt.want {
 				t.Errorf("STR Add result does not match = %v, expected = %v", main.String(), tt.want)
 			}
 
@@ -282,13 +282,12 @@ func Test_Add(t *testing.T) {
 			main, _ = bytesize.New(tt.base)
 
 			err = main.AddInt(tt.inINT)
-			if (err != nil) != (tt.errINT != "") ||
-				(err != nil && err.Error() != tt.errINT) {
+			if !errors.Is(err, tt.errINT) {
 				t.Errorf("INT Add error does not match = %v, expected = %v", err, tt.errINT)
 				return
 			}
 
-			if (tt.errINT == "") && main.String() != tt.want {
+			if tt.errINT == nil && main.String() != tt.want {
 				t.Errorf("INT Add result does not match = %v, expected = %v", main.String(), tt.want)
 			}
 		})
