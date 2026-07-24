@@ -63,6 +63,13 @@ func (s String) IsEmpty() bool {
 	return len(s.val) == 0
 }
 
+// IsZero reports whether the String holds no secret. It unlocks the json
+// ",omitzero" tag option: omitzero is evaluated before MarshalJSON, so an
+// empty secret is omitted from the output instead of appearing as "***".
+func (s String) IsZero() bool {
+	return s.IsEmpty()
+}
+
 // HashMD5 returns an MD5 hash of the string for obfuscation comparison.
 // Note: MD5 is used solely for obfuscation, not for security.
 func (s String) HashMD5() string {

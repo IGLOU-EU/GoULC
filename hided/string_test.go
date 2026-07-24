@@ -155,6 +155,58 @@ func TestIsEmpty(t *testing.T) {
 	})
 }
 
+// TestIsZero verifies that IsZero mirrors IsEmpty, which unlocks the json
+// ",omitzero" tag option on String fields.
+func TestIsZero(t *testing.T) {
+	tests := []struct {
+		name string
+		give string
+		want bool
+	}{
+		{"empty", "", true},
+		{"non-empty", "secret", false},
+		{"whitespace-is-not-zero", " ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewString(tt.give).IsZero(); got != tt.want {
+				t.Errorf("IsZero() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOmitZero verifies the ",omitzero" interaction: omitzero is evaluated
+// BEFORE MarshalJSON, so an empty secret is omitted from the output instead
+// of appearing as a spurious "***", while a non-empty one still obfuscates.
+func TestOmitZero(t *testing.T) {
+	type Config struct {
+		Password String `json:"password,omitzero"`
+	}
+
+	t.Run("empty-secret-omitted", func(t *testing.T) {
+		data, err := json.Marshal(Config{})
+		if err != nil {
+			t.Fatalf("json.Marshal() error: %v", err)
+		}
+		if got := string(data); got != "{}" {
+			t.Errorf("json.Marshal(empty) = %s, want {}", got)
+		}
+	})
+
+	t.Run("non-empty-secret-obfuscated", func(t *testing.T) {
+		data, err := json.Marshal(Config{Password: NewString("secret")})
+		if err != nil {
+			t.Fatalf("json.Marshal() error: %v", err)
+		}
+		want := `{"password":"***"}`
+		if got := string(data); got != want {
+			t.Errorf("json.Marshal(non-empty) = %s, want %s", got, want)
+		}
+	})
+}
+
 // TestHashMD5 verifies that HashMD5 returns the correct MD5 hex digest.
 func TestHashMD5(t *testing.T) {
 	tests := []struct {

@@ -18,6 +18,7 @@ A Go package to prevent sensitive data leakage from logs, error messages, and an
   - Implements the `Hider` interface with `Value` for accessing the underlying data.
   - `Reveal() string` returns the plaintext directly when you statically hold a `String`, without the `any` detour of `Value()`.
   - `HashMD5` for hash-based obfuscation comparison.
+  - `IsZero()` (alias of `IsEmpty()`) unlocks the json `,omitzero` tag option (Go 1.24+): `omitzero` is evaluated **before** `MarshalJSON`, so an empty secret tagged `json:"password,omitzero"` is omitted instead of appearing as a spurious `"***"`.
 
 - **🧬 Generic Accessor:**
   - `hided.Value[T](h Hider) T` returns the underlying value asserted to `T`.
