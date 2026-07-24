@@ -57,8 +57,17 @@ func IsPrintable(s string) bool {
 	return true
 }
 
-// IsExtended reports whether s contains only extended ASCII characters (0-255).
+// IsExtended reports whether s is valid UTF-8 made only of code points up
+// to 0xFF, that is, text representable in Latin-1 but encoded as UTF-8.
+//
+// Unlike the other functions of this package, which inspect raw bytes,
+// IsExtended iterates over runes. A raw Latin-1 byte such as "\xe9" is not
+// valid UTF-8 and is rejected, while the UTF-8 encoding of the same
+// character, "\xc3\xa9", is accepted.
 func IsExtended(s string) bool {
+	// Ranging over a string yields utf8.RuneError (0xFFFD) for each invalid
+	// byte. That value is above extendedMax, so malformed UTF-8 is rejected
+	// without an explicit validity check.
 	for _, r := range s {
 		if r > extendedMax {
 			return false
