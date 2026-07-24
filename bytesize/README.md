@@ -63,12 +63,12 @@ This package uses IEC binary units (powers of 1024) rather than SI decimal units
 ## ⚠️ Important Notes
 
 - Partial bytes not supported (e.g., "1.5 Bytes") - would require arbitrary byte width
-- Error handling covers:
-  - Empty string input
-  - No numeric value found
-  - Invalid IEC unit symbol
-  - Integer overflow from too large value
-  - Invalid JSON input type
+- Failures are reported through exported sentinel error values, match them with `errors.Is`:
+  - `ErrEmptyString`: empty string input
+  - `ErrNoValue`: no numeric value found
+  - `ErrInvalidIEC`: invalid IEC unit symbol
+  - `ErrIntegerOverflow`: value not representable as an int64
+  - `ErrJSONInvalidType`: invalid JSON input type
 
 ## 📜 License
 

@@ -2,6 +2,7 @@ package bytesize_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/bytesize"
@@ -12,7 +13,7 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 		name  string
 		input string
 		want  int64
-		err   string
+		wErr  error
 	}{
 		// Number cases
 		{
@@ -40,14 +41,14 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 		{
 			name:  "invalid unit type",
 			input: `"1Xor le chérif de l'espace"`,
-			err:   bytesize.ErrInvalidIEC,
+			wErr:  bytesize.ErrInvalidIEC,
 		},
 
 		// Other error cases
 		{
 			name:  "invalid json type",
 			input: `["Minsc", "Boo"]`,
-			err:   bytesize.ErrJSONInvalidType,
+			wErr:  bytesize.ErrJSONInvalidType,
 		},
 	}
 
@@ -56,16 +57,12 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 			var got bytesize.Size
 			err := json.Unmarshal([]byte(tt.input), &got)
 
-			if (err != nil) != (tt.err != "") {
-				t.Errorf("There is an error in on side only. Got %v, want %v", err, tt.err)
-			}
-
-			if err != nil && err.Error() != tt.err {
-				t.Errorf("Errors does not match = %v, want %v", err, tt.err)
+			if !errors.Is(err, tt.wErr) {
+				t.Errorf("Error does not match = %v, want %v", err, tt.wErr)
 				return
 			}
 
-			if err != nil && got.Bytes() != tt.want {
+			if err == nil && got.Bytes() != tt.want {
 				t.Errorf("Result does not match = %v, want %v", got.Bytes(), tt.want)
 			}
 		})

@@ -79,15 +79,27 @@ const (
 	TebiSymbol = "TiB" // Tebibyte
 	PebiSymbol = "PiB" // Pebibyte
 
-	// Error messages
-	ErrEmptyString     = "A Size string value cannot be empty"
-	ErrNoValue         = "No numeric value found in the given string"
-	ErrInvalidIEC      = "Invalid IEC unit symbol in Size string"
-	ErrIntegerOverflow = "Size value is too large to be represented as an int64"
-
 	percent  = 100
 	bitSize  = 64
 	exponent = 10
+)
+
+// Sentinel errors returned by Parse and the Size methods.
+// Callers match them with errors.Is.
+var (
+	// ErrEmptyString reports an empty size string.
+	ErrEmptyString = errors.New("size string cannot be empty")
+
+	// ErrNoValue reports a size string with no leading numeric value.
+	ErrNoValue = errors.New("no numeric value found in the size string")
+
+	// ErrInvalidIEC reports an unrecognized IEC unit symbol.
+	ErrInvalidIEC = errors.New("invalid IEC unit symbol in the size string")
+
+	// ErrIntegerOverflow reports a value that cannot be represented as an
+	// int64 count of bytes.
+	ErrIntegerOverflow = errors.New(
+		"size value cannot be represented as an int64")
 )
 
 // ByteValueIEC contains the byte values for each IEC binary unit in
@@ -149,7 +161,7 @@ func Parse(s string) (
 	truncated int64, fractional float64, representation string, err error,
 ) {
 	if s == "" {
-		return 0, 0, "", errors.New(ErrEmptyString)
+		return 0, 0, "", ErrEmptyString
 	}
 
 	if s == "0" {
@@ -173,7 +185,7 @@ func Parse(s string) (
 	symbolRaw := ""
 
 	if runePos == 0 {
-		return 0, 0, "", errors.New(ErrNoValue)
+		return 0, 0, "", ErrNoValue
 	}
 
 	if runePos > 0 {
@@ -251,7 +263,7 @@ func New(s string) (Size, error) {
 		return Size{}, err
 	}
 
-	return Size{t, f, r}, nil
+	return Size{t: t, f: f, r: r}, nil
 }
 
 // NewInt creates a new Size from an int64 value representing bytes.
@@ -332,9 +344,9 @@ func exponentFromSize(size float64) int {
 	}
 
 	// Ensure the exponent doesn't exceed our largest available unit.
-	max := len(ByteValueIEC) - 1
-	if exp > max {
-		return max
+	maxExp := len(ByteValueIEC) - 1
+	if exp > maxExp {
+		return maxExp
 	}
 
 	return exp
@@ -359,7 +371,7 @@ func exponentFromSymbol(symbol string) (int, error) {
 		}
 	}
 
-	return 0, errors.New(ErrInvalidIEC)
+	return 0, ErrInvalidIEC
 }
 
 // integerOverflow checks if a byte size value exceeds the maximum
@@ -371,7 +383,7 @@ func exponentFromSymbol(symbol string) (int, error) {
 // Returns ErrIntegerOverflow if the size is too large, nil otherwise.
 func integerOverflow(size float64) error {
 	if math.Ldexp(size, exponent) >= 1<<bitSize {
-		return errors.New(ErrIntegerOverflow)
+		return ErrIntegerOverflow
 	}
 
 	return nil
