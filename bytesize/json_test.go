@@ -111,6 +111,24 @@ func TestByteSize_UnmarshalJSON_InvalidNumber(t *testing.T) {
 	}
 }
 
+func TestByteSize_OmitZero(t *testing.T) {
+	// IsZero drives the ",omitzero" tag option, a zero Size field must
+	// disappear from the JSON output.
+	give := struct {
+		Used bytesize.Size `json:"used,omitzero"`
+		Free bytesize.Size `json:"free,omitzero"`
+	}{Used: bytesize.NewInt(bytesize.Kibi)}
+
+	data, err := json.Marshal(give)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+
+	if want := `{"used":"1KiB"}`; string(data) != want {
+		t.Errorf("Result does not match = %s, want %s", data, want)
+	}
+}
+
 func TestByteSize_MarshalJSON(t *testing.T) {
 	tests := []struct {
 		name  string

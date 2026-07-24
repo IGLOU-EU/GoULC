@@ -9,7 +9,9 @@ A Go package for handling byte sizes using IEC binary units (powers of 1024). It
 - **🔌 Interfacing**:
   - JSON Marshaler/Unmarshaler for IEC string representation
   - JSON numbers are accepted as byte counts, with the same range checks and fraction handling as strings
+  - Text Marshaler/Unmarshaler, enabling JSON map keys and `flag.TextVar`
   - Stringer for human-readable output
+  - `IsZero()` support, so the `omitzero` JSON tag option (Go 1.24+) omits zero sizes
 
 - **💾 Dual Representation**:
   - Maintains both truncated integer (int64) and exact floating-point (float64) values

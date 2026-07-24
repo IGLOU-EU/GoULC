@@ -11,6 +11,10 @@ import (
 type Config struct {
 	MaxFileSize bytesize.Size `json:"maxFileSize"`
 	BufferSize  bytesize.Size `json:"bufferSize"`
+
+	// CacheSize stays absent from the JSON output while it is zero,
+	// thanks to the omitzero tag option (Go 1.24+) backed by Size.IsZero.
+	CacheSize bytesize.Size `json:"cacheSize,omitzero"`
 }
 
 func main() {
@@ -42,4 +46,17 @@ func main() {
 	// Different ways to specify values
 	fmt.Printf("\nDifferent ways to specify values:\n")
 	fmt.Printf("Max File Size: %v bytes; Exact: %v; Representation: %v\n", bytesize.NewInt(256*bytesize.Gibi).Bytes(), bytesize.NewInt(256*bytesize.Gibi).Exact(), bytesize.NewInt(256*bytesize.Gibi))
+
+	// Sizes implement encoding.TextMarshaler, so they also work as map keys
+	quotas := map[bytesize.Size]string{
+		bytesize.NewInt(bytesize.Gibi):      "free tier",
+		bytesize.NewInt(50 * bytesize.Gibi): "paid tier",
+	}
+
+	quotasJSON, err := json.MarshalIndent(quotas, "", "  ")
+	if err != nil {
+		log.Fatalf("Failed to marshal quotas: %v", err)
+	}
+
+	fmt.Printf("\nSizes as JSON map keys:\n%s\n", string(quotasJSON))
 }
