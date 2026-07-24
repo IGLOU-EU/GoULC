@@ -26,11 +26,17 @@ func main() {
 	// Retrieve and print the MD5 hash for debugging without revealing the actual key
 	fmt.Println("DEBUG: I need to know if the code is correct, but without displaying it:", myHidedSecretKey.HashMD5())
 
-	// Value() is the ONLY way to access the real value
+	// Value() and Reveal() are the ONLY ways to access the real value
 	fmt.Printf("I need to use it! batcavePass(%v) \n", myHidedSecretKey.Value())
 
-	// hided.Value[T] is a type-safe alternative to Value() + type assertion.
-	// It returns the zero value of T on a type mismatch instead of panicking.
-	batcode := hided.Value[string](myHidedSecretKey)
+	// Reveal() returns the plaintext as a typed string when you statically
+	// hold a hided.String, no `any` detour, no assertion.
+	fmt.Printf("Direct access: batcavePass(%s)\n", myHidedSecretKey.Reveal())
+
+	// hided.Value[T] is a type-safe alternative to Value() + type assertion
+	// for values only known as the Hider interface. It returns the zero
+	// value of T on a type mismatch (or nil Hider) instead of panicking.
+	var anyHider hided.Hider = myHidedSecretKey
+	batcode := hided.Value[string](anyHider)
 	fmt.Printf("Type-safe access: batcavePass(%s)\n", batcode)
 }
