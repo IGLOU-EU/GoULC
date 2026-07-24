@@ -19,9 +19,15 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
+// Package duration wraps time.Duration with JSON serialization support.
+//
+// In JSON, a duration is either a string in time.ParseDuration format
+// (e.g. "1h30m") or a bare number of nanoseconds, the unit of
+// time.Duration itself.
 package duration
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,20 +51,35 @@ type Duration struct {
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
-// It supports integer, float, and string representations of durations.
-// With string inputs, it uses time.ParseDuration to interpret standard
-// duration formats (e.g., "1h30m").
+// A JSON string is parsed with time.ParseDuration (e.g. "1h30m"). A bare
+// JSON number is a count of nanoseconds, the unit of time.Duration itself,
+// and must be a whole number fitting in an int64: anything else (fraction,
+// scientific notation, out-of-range value) returns an error wrapping
+// ErrBadDuration. A JSON null leaves the value unchanged, per the
+// encoding/json convention.
 func (d *Duration) UnmarshalJSON(b []byte) error {
+	// Per encoding/json convention, unmarshaling null is a no-op.
+	if string(b) == "null" {
+		return nil
+	}
+
+	// Decode numbers as json.Number instead of float64: float64 loses
+	// precision above 2^53 and silently wraps values overflowing int64.
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+
 	var i any
-	if err := json.Unmarshal(b, &i); err != nil {
+	if err := dec.Decode(&i); err != nil {
 		return err
 	}
 
 	switch value := i.(type) {
-	// Accordingly with https://pkg.go.dev/encoding/json#Unmarshal
-	// JSON numbers are always considered as ab interface value of float64.
-	case float64:
-		d.Duration = time.Duration(value)
+	case json.Number:
+		ns, err := value.Int64()
+		if err != nil {
+			return fmt.Errorf("%w: %q: %w", ErrBadDuration, value, err)
+		}
+		d.Duration = time.Duration(ns)
 	case string:
 		var err error
 		d.Duration, err = time.ParseDuration(value)

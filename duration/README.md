@@ -12,8 +12,9 @@ A Go package for handling time durations with JSON support. It wraps the standar
   - Support for multiple input formats
 
 - **🔄 Input Formats**:
-  - Parse numeric values (integers and floats) as nanoseconds
   - Parse string representations using `time.ParseDuration` format
+  - Parse bare JSON numbers as nanosecond counts, consistently with `time.Duration`. The number must be a whole number fitting in an int64: fractions, scientific notation, and out-of-range values are rejected with an error instead of losing precision or silently wrapping around
+  - Treat JSON `null` as a no-op, following the `encoding/json` convention
   - Automatic type detection during JSON unmarshaling
 
 - **🛠️ Utility**:
