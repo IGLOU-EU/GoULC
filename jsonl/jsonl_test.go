@@ -2,6 +2,7 @@ package jsonl
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -82,13 +83,52 @@ func TestMarshal(t *testing.T) {
 	}
 }
 
+func TestMarshal_Error(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []any
+		errContains string
+	}{
+		{
+			name:        "unsupported type on first record",
+			input:       []any{make(chan int)},
+			errContains: "jsonl: line 1:",
+		},
+		{
+			name:        "unsupported type on second record",
+			input:       []any{42, func() {}},
+			errContains: "jsonl: line 2:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Marshal(tt.input)
+			if err == nil {
+				t.Fatal("Marshal() error = nil, want error")
+			}
+			if got != nil {
+				t.Errorf("Marshal() = %q, want nil", got)
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("Marshal() error = %q, want containing %q", err, tt.errContains)
+			}
+			var unsupported *json.UnsupportedTypeError
+			if !errors.As(err, &unsupported) {
+				t.Errorf("Marshal() error = %v, want a json.UnsupportedTypeError via errors.As", err)
+			}
+		})
+	}
+}
+
 func TestUnmarshal(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   []byte
-		want    []spaceLog
-		wantErr bool
-		errIs   error
+		name        string
+		input       []byte
+		want        []spaceLog
+		wantErr     bool
+		errIs       error
+		errContains string
 	}{
 		{
 			name:    "nil data returns nil",
@@ -127,24 +167,27 @@ func TestUnmarshal(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "blank line inside data returns error",
-			input:   []byte(`{"id":1,"character":"HAL 9000","quote":"Daisy, Daisy...","is_major_tom":false}` + "\n\n" + `{"id":2,"character":"Major Tom","quote":"Tell my wife I love her very much.","is_major_tom":true}`),
-			want:    nil,
-			wantErr: true,
-			errIs:   errors.New("jsonl: blank line inside JSONL data"),
+			name:        "blank line inside data returns error",
+			input:       []byte(`{"id":1,"character":"HAL 9000","quote":"Daisy, Daisy...","is_major_tom":false}` + "\n\n" + `{"id":2,"character":"Major Tom","quote":"Tell my wife I love her very much.","is_major_tom":true}`),
+			want:        nil,
+			wantErr:     true,
+			errIs:       ErrBlankLine,
+			errContains: "jsonl: line 2:",
 		},
 		{
-			name:    "invalid JSON returns error",
-			input:   []byte(`{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false`),
-			want:    nil,
-			wantErr: true,
+			name:        "invalid JSON returns error",
+			input:       []byte(`{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false`),
+			want:        nil,
+			wantErr:     true,
+			errContains: "jsonl: line 1:",
 		},
 		{
-			name:    "empty line with trailing newline only",
-			input:   []byte(`{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false}` + "\n" + "\n"),
-			want:    nil,
-			wantErr: true,
-			errIs:   errors.New("jsonl: blank line inside JSONL data"),
+			name:        "empty line with trailing newline only",
+			input:       []byte(`{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false}` + "\n" + "\n"),
+			want:        nil,
+			wantErr:     true,
+			errIs:       ErrBlankLine,
+			errContains: "jsonl: line 2:",
 		},
 	}
 
@@ -154,10 +197,11 @@ func TestUnmarshal(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Unmarshal() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.errIs != nil && err != nil {
-				if err.Error() != tt.errIs.Error() {
-					t.Errorf("Unmarshal() error = %v, want %v", err, tt.errIs)
-				}
+			if tt.errIs != nil && !errors.Is(err, tt.errIs) {
+				t.Errorf("Unmarshal() error = %v, want errors.Is %v", err, tt.errIs)
+			}
+			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("Unmarshal() error = %v, want containing %q", err, tt.errContains)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Unmarshal() = %+v, want %+v", got, tt.want)
@@ -168,11 +212,12 @@ func TestUnmarshal(t *testing.T) {
 
 func TestUnmarshalStream(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    []spaceLog
-		wantErr bool
-		errIs   error
+		name        string
+		input       string
+		want        []spaceLog
+		wantErr     bool
+		errIs       error
+		errContains string
 	}{
 		{
 			name:    "empty reader returns nil",
@@ -203,24 +248,27 @@ func TestUnmarshalStream(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "blank line inside data returns error",
-			input:   `{"id":1,"character":"HAL 9000","quote":"Daisy, Daisy...","is_major_tom":false}` + "\n\n" + `{"id":2,"character":"Major Tom","quote":"Tell my wife I love her very much.","is_major_tom":true}`,
-			want:    nil,
-			wantErr: true,
-			errIs:   errors.New("jsonl: blank line inside JSONL data"),
+			name:        "blank line inside data returns error",
+			input:       `{"id":1,"character":"HAL 9000","quote":"Daisy, Daisy...","is_major_tom":false}` + "\n\n" + `{"id":2,"character":"Major Tom","quote":"Tell my wife I love her very much.","is_major_tom":true}`,
+			want:        nil,
+			wantErr:     true,
+			errIs:       ErrBlankLine,
+			errContains: "jsonl: line 2:",
 		},
 		{
-			name:    "invalid JSON returns error",
-			input:   `{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false`,
-			want:    nil,
-			wantErr: true,
+			name:        "invalid JSON returns error",
+			input:       `{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false`,
+			want:        nil,
+			wantErr:     true,
+			errContains: "jsonl: line 1:",
 		},
 		{
-			name:    "empty line with trailing newline only",
-			input:   `{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false}` + "\n" + "\n",
-			want:    nil,
-			wantErr: true,
-			errIs:   errors.New("jsonl: blank line inside JSONL data"),
+			name:        "empty line with trailing newline only",
+			input:       `{"id":1,"character":"HAL 9000","quote":"I'm sorry, Dave.","is_major_tom":false}` + "\n" + "\n",
+			want:        nil,
+			wantErr:     true,
+			errIs:       ErrBlankLine,
+			errContains: "jsonl: line 2:",
 		},
 	}
 
@@ -230,10 +278,11 @@ func TestUnmarshalStream(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("UnmarshalStream() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.errIs != nil && err != nil {
-				if err.Error() != tt.errIs.Error() {
-					t.Errorf("UnmarshalStream() error = %v, want %v", err, tt.errIs)
-				}
+			if tt.errIs != nil && !errors.Is(err, tt.errIs) {
+				t.Errorf("UnmarshalStream() error = %v, want errors.Is %v", err, tt.errIs)
+			}
+			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("UnmarshalStream() error = %v, want containing %q", err, tt.errContains)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("UnmarshalStream() = %+v, want %+v", got, tt.want)

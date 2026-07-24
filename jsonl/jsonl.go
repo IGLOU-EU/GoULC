@@ -19,6 +19,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
+// Package jsonl encodes and decodes JSON Lines (JSONL) data.
 package jsonl
 
 import (
@@ -26,11 +27,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 )
 
 const lineSeparator = '\n'
 const heuristicSize = 512
+
+// ErrBlankLine reports a blank line inside JSONL data: the JSON Lines
+// spec requires every line to hold a JSON value.
+// https://jsonlines.org/#each-line-is-a-valid-json-value
+// It is returned wrapped with the offending line number, match it with
+// errors.Is.
+var ErrBlankLine = errors.New("blank line inside JSONL data")
 
 // Marshal encodes values as JSON Lines (JSONL). Each value is marshaled
 // as a single JSON object, separated by newlines. A nil or empty slice
@@ -40,14 +49,14 @@ func Marshal[T any](records []T) ([]byte, error) {
 		return nil, nil
 	}
 
-	buf := bytes.Buffer{}
+	var buf bytes.Buffer
 	// Rough heuristic bytes per record
 	buf.Grow(len(records) * heuristicSize)
 
 	enc := json.NewEncoder(&buf)
 	for i := range records {
 		if err := enc.Encode(records[i]); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("jsonl: line %d: %w", i+1, err)
 		}
 	}
 
@@ -67,16 +76,16 @@ func Unmarshal[T any](data []byte) ([]T, error) {
 	lines := bytes.Count(data, []byte{lineSeparator}) + 1
 	records := make([]T, 0, lines)
 
+	n := 0
 	for line := range bytes.SplitSeq(data, []byte{lineSeparator}) {
+		n++
 		if len(line) == 0 {
-			// JSONL spec say a blank line is not a valid value
-			// https://jsonlines.org/#each-line-is-a-valid-json-value
-			return nil, errors.New("jsonl: blank line inside JSONL data")
+			return nil, fmt.Errorf("jsonl: line %d: %w", n, ErrBlankLine)
 		}
 
 		var rec T
 		if err := json.Unmarshal(line, &rec); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("jsonl: line %d: %w", n, err)
 		}
 		records = append(records, rec)
 	}
@@ -88,8 +97,10 @@ func Unmarshal[T any](data []byte) ([]T, error) {
 // from an io.Reader into a slice of typed records
 func UnmarshalStream[T any](r io.Reader) ([]T, error) {
 	reader := bufio.NewReader(r)
-	records := make([]T, 0)
 
+	var records []T
+
+	n := 0
 	for {
 		line, err := reader.ReadBytes(lineSeparator)
 		if err == io.EOF && len(line) == 0 {
@@ -107,13 +118,14 @@ func UnmarshalStream[T any](r io.Reader) ([]T, error) {
 			break
 		}
 
+		n++
 		if len(line) == 0 {
-			return nil, errors.New("jsonl: blank line inside JSONL data")
+			return nil, fmt.Errorf("jsonl: line %d: %w", n, ErrBlankLine)
 		}
 
 		var rec T
 		if err := json.Unmarshal(line, &rec); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("jsonl: line %d: %w", n, err)
 		}
 		records = append(records, rec)
 
@@ -123,10 +135,6 @@ func UnmarshalStream[T any](r io.Reader) ([]T, error) {
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if len(records) == 0 {
-		return nil, nil
 	}
 
 	return records, nil
