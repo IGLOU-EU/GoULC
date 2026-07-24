@@ -19,7 +19,7 @@ A Go package for handling time durations with JSON support. It wraps the standar
 
 - **🛠️ Utility**:
   - Full compatibility with standard `time.Duration` functionality
-  - Convert to/from standard `time.Duration`
+  - Convert to/from standard `time.Duration` with `New` and `ToTimeDuration`
   - Maintain all arithmetic and comparison capabilities
   - Preserve duration precision
 
