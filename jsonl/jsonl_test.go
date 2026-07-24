@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 type spaceLog struct {
@@ -288,6 +291,120 @@ func TestUnmarshalStream(t *testing.T) {
 				t.Errorf("UnmarshalStream() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUnmarshalStreamLimit(t *testing.T) {
+	longQuote := strings.Repeat("a", 200)
+	longLine := `{"id":1,"character":"HAL 9000","quote":"` + longQuote + `","is_major_tom":false}`
+
+	tests := []struct {
+		name        string
+		input       string
+		maxLineSize int
+		want        []spaceLog
+		wantErr     bool
+		errIs       error
+		errContains string
+	}{
+		{
+			name:        "line under the limit passes",
+			input:       longLine + "\n",
+			maxLineSize: 1024,
+			want:        []spaceLog{{ID: 1, Character: "HAL 9000", Quote: longQuote}},
+		},
+		{
+			name:        "line over the limit is rejected",
+			input:       longLine + "\n",
+			maxLineSize: 64,
+			wantErr:     true,
+			errIs:       ErrLineTooLong,
+			errContains: "jsonl: line 1:",
+		},
+		{
+			name:        "line over the limit on second line is rejected",
+			input:       `{"id":2,"character":"Dave","quote":"ok","is_major_tom":false}` + "\n" + longLine + "\n",
+			maxLineSize: 128,
+			wantErr:     true,
+			errIs:       ErrLineTooLong,
+			errContains: "jsonl: line 2:",
+		},
+		{
+			name:        "non-positive limit falls back to the default",
+			input:       longLine + "\n",
+			maxLineSize: 0,
+			want:        []spaceLog{{ID: 1, Character: "HAL 9000", Quote: longQuote}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := UnmarshalStreamLimit[spaceLog](strings.NewReader(tt.input), tt.maxLineSize)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("UnmarshalStreamLimit() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.errIs != nil && !errors.Is(err, tt.errIs) {
+				t.Errorf("UnmarshalStreamLimit() error = %v, want errors.Is %v", err, tt.errIs)
+			}
+			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("UnmarshalStreamLimit() error = %v, want containing %q", err, tt.errContains)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnmarshalStreamLimit() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnmarshalStream_DefaultLimit(t *testing.T) {
+	// A line larger than bufio's 64 KiB scanner default proves the
+	// effective bound is the package default, not the scanner one.
+	quote := strings.Repeat("b", 100*1024)
+	input := `{"id":9,"character":"HAL 9000","quote":"` + quote + `","is_major_tom":false}` + "\n"
+
+	got, err := UnmarshalStream[spaceLog](strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("UnmarshalStream() error = %v", err)
+	}
+	if len(got) != 1 || got[0].Quote != quote {
+		t.Errorf("UnmarshalStream() = %d records, want 1 holding the full quote", len(got))
+	}
+}
+
+func TestUnmarshalStream_ReaderError(t *testing.T) {
+	errRead := errors.New("transmission interrupted")
+	stream := io.MultiReader(
+		strings.NewReader(`{"id":1,"character":"HAL 9000","quote":"ok","is_major_tom":false}`+"\n"),
+		iotest.ErrReader(errRead),
+	)
+
+	got, err := UnmarshalStream[spaceLog](stream)
+	if !errors.Is(err, errRead) {
+		t.Fatalf("UnmarshalStream() error = %v, want errors.Is %v", err, errRead)
+	}
+	if got != nil {
+		t.Errorf("UnmarshalStream() = %+v, want nil", got)
+	}
+}
+
+func TestUnmarshal_BoundedPreallocation(t *testing.T) {
+	// Repro of the capacity amplification DoS: 1 MiB of newlines used to
+	// reserve lines*sizeof(T) bytes before the first line was validated.
+	data := bytes.Repeat([]byte{lineSeparator}, 1<<20)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got, err := Unmarshal[spaceLog](data)
+	runtime.ReadMemStats(&after)
+
+	if !errors.Is(err, ErrBlankLine) {
+		t.Fatalf("Unmarshal() error = %v, want errors.Is ErrBlankLine", err)
+	}
+	if got != nil {
+		t.Errorf("Unmarshal() = %d records, want nil", len(got))
+	}
+	if delta := after.TotalAlloc - before.TotalAlloc; delta > 16<<20 {
+		t.Errorf("Unmarshal() allocated %d bytes before validation, want a bounded preallocation", delta)
 	}
 }
 

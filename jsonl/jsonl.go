@@ -31,15 +31,33 @@ import (
 	"io"
 )
 
-const lineSeparator = '\n'
-const heuristicSize = 512
+const (
+	lineSeparator = '\n'
+	heuristicSize = 512
 
-// ErrBlankLine reports a blank line inside JSONL data: the JSON Lines
-// spec requires every line to hold a JSON value.
-// https://jsonlines.org/#each-line-is-a-valid-json-value
-// It is returned wrapped with the offending line number, match it with
-// errors.Is.
-var ErrBlankLine = errors.New("blank line inside JSONL data")
+	// maxRecordsHint caps the slice preallocation of Unmarshal: the
+	// line count is known before any line is validated, so the hint
+	// must not scale with attacker-controlled input.
+	maxRecordsHint = 1024
+)
+
+// DefaultMaxLineSize is the line size bound applied by UnmarshalStream.
+// It is generous on purpose: it only exists to keep a hostile or
+// corrupted stream from buffering unbounded data in memory.
+const DefaultMaxLineSize = 16 << 20 // 16 MiB
+
+// Errors reported on invalid JSONL input. They are returned wrapped
+// with the offending line number, match them with errors.Is.
+var (
+	// ErrBlankLine reports a blank line inside JSONL data: the JSON
+	// Lines spec requires every line to hold a JSON value.
+	// https://jsonlines.org/#each-line-is-a-valid-json-value
+	ErrBlankLine = errors.New("blank line inside JSONL data")
+
+	// ErrLineTooLong reports a line exceeding the maximum line size
+	// accepted by UnmarshalStream or UnmarshalStreamLimit.
+	ErrLineTooLong = errors.New("line exceeds maximum size")
+)
 
 // Marshal encodes values as JSON Lines (JSONL). Each value is marshaled
 // as a single JSON object, separated by newlines. A nil or empty slice
@@ -74,7 +92,7 @@ func Unmarshal[T any](data []byte) ([]T, error) {
 	}
 
 	lines := bytes.Count(data, []byte{lineSeparator}) + 1
-	records := make([]T, 0, lines)
+	records := make([]T, 0, min(lines, maxRecordsHint))
 
 	n := 0
 	for line := range bytes.SplitSeq(data, []byte{lineSeparator}) {
@@ -93,32 +111,33 @@ func Unmarshal[T any](data []byte) ([]T, error) {
 	return records, nil
 }
 
-// UnmarshalStream parses JSON Lines (JSONL) data
-// from an io.Reader into a slice of typed records
+// UnmarshalStream parses JSON Lines (JSONL) data from an io.Reader
+// into a slice of typed records. Lines longer than DefaultMaxLineSize
+// are rejected with ErrLineTooLong, use UnmarshalStreamLimit to pick
+// another bound.
 func UnmarshalStream[T any](r io.Reader) ([]T, error) {
-	reader := bufio.NewReader(r)
+	return UnmarshalStreamLimit[T](r, DefaultMaxLineSize)
+}
+
+// UnmarshalStreamLimit parses JSON Lines (JSONL) data from an io.Reader
+// into a slice of typed records. maxLineSize bounds, in bytes, the size
+// of a single line: longer lines abort parsing with ErrLineTooLong so a
+// hostile or corrupted stream cannot buffer unbounded data in memory.
+// A maxLineSize <= 0 falls back to DefaultMaxLineSize.
+func UnmarshalStreamLimit[T any](r io.Reader, maxLineSize int) ([]T, error) {
+	if maxLineSize <= 0 {
+		maxLineSize = DefaultMaxLineSize
+	}
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(nil, maxLineSize)
 
 	var records []T
 
 	n := 0
-	for {
-		line, err := reader.ReadBytes(lineSeparator)
-		if err == io.EOF && len(line) == 0 {
-			break
-		}
-
-		// Trim the line separator from the end
-		if len(line) > 0 && line[len(line)-1] == lineSeparator {
-			line = line[:len(line)-1]
-		}
-
-		// Handle trailing newline on last line: if we hit EOF and the line
-		// is empty after trimming, we are done.
-		if len(line) == 0 && err == io.EOF {
-			break
-		}
-
+	for scanner.Scan() {
 		n++
+		line := scanner.Bytes()
 		if len(line) == 0 {
 			return nil, fmt.Errorf("jsonl: line %d: %w", n, ErrBlankLine)
 		}
@@ -128,13 +147,13 @@ func UnmarshalStream[T any](r io.Reader) ([]T, error) {
 			return nil, fmt.Errorf("jsonl: line %d: %w", n, err)
 		}
 		records = append(records, rec)
+	}
 
-		if err == io.EOF {
-			break
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("jsonl: line %d: %w", n+1, ErrLineTooLong)
 		}
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	return records, nil

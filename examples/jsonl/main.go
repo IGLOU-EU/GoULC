@@ -23,8 +23,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"gitlab.com/iglou.eu/goulc/jsonl"
 )
@@ -79,5 +81,14 @@ func main() {
 	fmt.Printf("\n--- Streamed JSONL ---\n")
 	for i, entry := range streamed {
 		fmt.Printf("Stream Record %d: Level=%s, Message=%s, Code=%d\n", i+1, entry.Level, entry.Message, entry.Code)
+	}
+
+	// 4. Bound the accepted line size when the stream is not trusted
+	untrusted := bytes.NewReader([]byte(`{"level":"info","message":"` + strings.Repeat("x", 512) + `"}` + "\n"))
+
+	fmt.Printf("\n--- Limited stream ---\n")
+	_, err = jsonl.UnmarshalStreamLimit[LogEntry](untrusted, 64)
+	if errors.Is(err, jsonl.ErrLineTooLong) {
+		fmt.Printf("Oversized line rejected: %v\n", err)
 	}
 }
