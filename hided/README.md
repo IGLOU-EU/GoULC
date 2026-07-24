@@ -9,7 +9,7 @@ A Go package to prevent sensitive data leakage from logs, error messages, and an
 - **🔒 Secure by Design:**
   - `hided.String` is a struct with an unexported `[]byte` field, making it impossible to leak via type assertion or casting.
   - `String()`, `GoString()`, and `Format()` all return `"***"`, covering `%s`, `%v`, `%q`, `%+v`, `%#v`, and all other fmt verbs.
-  - `MarshalJSON()` and `MarshalText()` return `"***"`, preventing leakage through JSON or text serialization.
+  - `MarshalJSON()` and `MarshalText()` return `"***"`, preventing leakage through JSON or text serialization. Marshaling is therefore **lossy by design**: unmarshaling a marshaled `String` stores `"***"`, never the original secret.
   - Built-in `print()`/`println()` cannot leak the value since the underlying data is a struct with unexported fields.
   - `Value()` and `Reveal()` are the **only** ways to access the real value.
 
