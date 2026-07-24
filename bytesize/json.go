@@ -40,9 +40,15 @@ func (d *Size) UnmarshalJSON(b []byte) error {
 
 	switch value := i.(type) {
 	// Accordingly with https://pkg.go.dev/encoding/json#Unmarshal
-	// JSON numbers are always considered as ab interface value of float64.
+	// JSON numbers are always considered as an interface value of float64.
 	case float64:
-		*d = NewInt(int64(value))
+		// Check the int64 range and keep the fractional part, so the
+		// number branch behaves exactly like the string branch.
+		if err := integerOverflow(value); err != nil {
+			return err
+		}
+
+		*d = Size{t: int64(value), f: value, r: ToString(value)}
 	case string:
 		var err error
 		*d, err = New(value)
