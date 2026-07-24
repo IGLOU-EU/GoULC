@@ -10,38 +10,64 @@ import (
 
 func TestByteSize_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  int64
-		wErr  error
+		name   string
+		input  string
+		want   int64
+		wExact float64
+		wErr   error
 	}{
 		// Number cases
 		{
-			name:  "integer value",
-			input: `44040192`,
-			want:  44040192,
+			name:   "integer value",
+			input:  `44040192`,
+			want:   44040192,
+			wExact: 44040192,
 		},
 		{
-			name:  "floating value",
-			input: `44480593.92`,
-			want:  44480593,
+			name:   "floating value",
+			input:  `44480593.92`,
+			want:   44480593,
+			wExact: 44480593.92,
 		},
 		{
-			name:  "negative value",
-			input: `-44040192`,
-			want:  -44040192,
+			name:   "negative value",
+			input:  `-44040192`,
+			want:   -44040192,
+			wExact: -44040192,
+		},
+		{
+			name:  "too big number value",
+			input: `1e300`,
+			wErr:  bytesize.ErrIntegerOverflow,
 		},
 
 		// String cases
 		{
-			name:  "regular str value",
-			input: `"42MiB"`,
-			want:  42 * bytesize.Mebi,
+			name:   "regular str value",
+			input:  `"42MiB"`,
+			want:   42 * bytesize.Mebi,
+			wExact: float64(42 * bytesize.Mebi),
+		},
+		{
+			name:   "floating str value",
+			input:  `"1.9"`,
+			want:   1,
+			wExact: 1.9,
 		},
 		{
 			name:  "invalid unit type",
 			input: `"1Xor le chérif de l'espace"`,
 			wErr:  bytesize.ErrInvalidIEC,
+		},
+		{
+			name:  "infinite str value",
+			input: `"inf"`,
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "negative infinite str value with unit",
+			input: `"-infKiB"`,
+			wErr:  bytesize.ErrIntegerOverflow,
 		},
 
 		// Other error cases
@@ -62,10 +88,26 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 				return
 			}
 
-			if err == nil && got.Bytes() != tt.want {
-				t.Errorf("Result does not match = %v, want %v", got.Bytes(), tt.want)
+			if err == nil &&
+				(got.Bytes() != tt.want || got.Exact() != tt.wExact) {
+				t.Errorf(
+					"Result does not match = %v (exact %v), want %v (exact %v)",
+					got.Bytes(), got.Exact(), tt.want, tt.wExact,
+				)
 			}
 		})
+	}
+}
+
+func TestByteSize_UnmarshalJSON_InvalidNumber(t *testing.T) {
+	// 1e400 is valid JSON syntax but does not fit a float64, so the
+	// decoding inside UnmarshalJSON must surface the json error.
+	var got bytesize.Size
+	err := json.Unmarshal([]byte(`1e400`), &got)
+
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		t.Errorf("Error is not a json.UnmarshalTypeError = %v", err)
 	}
 }
 
