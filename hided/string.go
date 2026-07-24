@@ -75,6 +75,13 @@ func (s String) Value() any {
 	return string(s.val)
 }
 
+// Reveal returns the underlying plaintext as a typed string. It is the
+// direct accessor for call sites that statically hold a String, where the
+// generic Value[T] indirection through the Hider interface brings nothing.
+func (s String) Reveal() string {
+	return string(s.val)
+}
+
 // MarshalJSON implements json.Marshaler to prevent leaks in JSON output.
 func (_ String) MarshalJSON() ([]byte, error) {
 	return json.Marshal(obfuscated)

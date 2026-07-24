@@ -189,6 +189,27 @@ func TestValue(t *testing.T) {
 	}
 }
 
+// TestReveal verifies that Reveal() returns the underlying plaintext as a
+// typed string, mirroring Value() for call sites that statically hold a String.
+func TestReveal(t *testing.T) {
+	tests := []struct {
+		name string
+		give string
+	}{
+		{"non-empty", "the-real-secret"},
+		{"empty", ""},
+		{"unicode", "héllo wörld 🔑"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewString(tt.give).Reveal(); got != tt.give {
+				t.Errorf("Reveal() = %q, want %q", got, tt.give)
+			}
+		})
+	}
+}
+
 // TestValueReturnsString verifies that Value() returns a value of type string.
 func TestValueReturnsString(t *testing.T) {
 	s := NewString("test")
