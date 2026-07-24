@@ -50,6 +50,11 @@ type Duration struct {
 	time.Duration
 }
 
+// New wraps a time.Duration in a Duration.
+func New(d time.Duration) Duration {
+	return Duration{Duration: d}
+}
+
 // UnmarshalJSON implements the json.Unmarshaler interface.
 // A JSON string is parsed with time.ParseDuration (e.g. "1h30m"). A bare
 // JSON number is a count of nanoseconds, the unit of time.Duration itself,

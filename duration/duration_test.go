@@ -201,6 +201,14 @@ func TestDuration_JSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNew(t *testing.T) {
+	want := 45 * time.Second
+
+	if got := duration.New(want); got.Duration != want {
+		t.Errorf("New(%v) = %v, want %v", want, got.Duration, want)
+	}
+}
+
 func TestDuration_ToTimeDuration(t *testing.T) {
 	want := 90 * time.Minute
 
