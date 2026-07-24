@@ -2,6 +2,7 @@ package bytesize_test
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"testing"
 
@@ -94,6 +95,27 @@ func Test_Parse(t *testing.T) {
 			wString: "42MiB",
 		},
 		{
+			name:    "byte unit value",
+			input:   "1B",
+			wInt:    1,
+			wFloat:  1,
+			wString: "1B",
+		},
+		{
+			name:    "hundred pebibytes",
+			input:   "100PiB",
+			wInt:    100 * bytesize.Pebi,
+			wFloat:  float64(100 * bytesize.Pebi),
+			wString: "100PiB",
+		},
+		{
+			name:    "near max value",
+			input:   "8191PiB",
+			wInt:    8191 * bytesize.Pebi,
+			wFloat:  float64(8191 * bytesize.Pebi),
+			wString: "8191PiB",
+		},
+		{
 			name:  "symbol without value",
 			input: "PiB",
 			wErr:  bytesize.ErrNoValue,
@@ -111,6 +133,36 @@ func Test_Parse(t *testing.T) {
 		{
 			name:  "too big value",
 			input: "10000P",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "too big unitless value",
+			input: "1e20",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "too small negative value with unit",
+			input: "-9000PiB",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "positive infinity",
+			input: "inf",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "negative infinity with unit",
+			input: "-infKiB",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "not a number",
+			input: "nan",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "not a number with unit",
+			input: "nanKiB",
 			wErr:  bytesize.ErrIntegerOverflow,
 		},
 	}
@@ -161,6 +213,21 @@ func Test_ToString(t *testing.T) {
 			name:  "exbi value",
 			input: float64(4200 * bytesize.Pebi),
 			want:  "4200PiB",
+		},
+		{
+			name:  "positive infinity",
+			input: math.Inf(1),
+			want:  "+Inf",
+		},
+		{
+			name:  "negative infinity",
+			input: math.Inf(-1),
+			want:  "-Inf",
+		},
+		{
+			name:  "not a number",
+			input: math.NaN(),
+			want:  "NaN",
 		},
 	}
 
@@ -258,6 +325,14 @@ func Test_Add(t *testing.T) {
 			base:   "8000PiB",
 			inSTR:  "4200PiB",
 			inINT:  4200 * bytesize.Pebi,
+			errSTR: bytesize.ErrIntegerOverflow,
+			errINT: bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:   "add too small negative value",
+			base:   "-8000PiB",
+			inSTR:  "-4200PiB",
+			inINT:  -4200 * bytesize.Pebi,
 			errSTR: bytesize.ErrIntegerOverflow,
 			errINT: bytesize.ErrIntegerOverflow,
 		},

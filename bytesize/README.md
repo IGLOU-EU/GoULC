@@ -19,10 +19,11 @@ A Go package for handling byte sizes using IEC binary units (powers of 1024). It
     - `String()` returns canonical string (e.g., "42.42MiB")
 
 - **📊 Size Support**:
-  - Range from 0B to ~9 EiB (maximum int64 value)
+  - Range limited to what int64 can represent, ~8 EiB in both directions
   - Supports negative values and floating-point components
   - Truncates toward zero without rounding to prevent overflows
-  - Integer overflow detection
+  - Integer overflow detection on both bounds
+  - Non-finite values (NaN, ±Inf) are rejected at parsing, `ToString` formats them as-is ("+Inf", "-Inf", "NaN")
 
 - **🔤 String Operations**:
   - Parse size strings in format "NUMBER[OPTIONNAL UNIT]" (e.g., "42", "42.5MiB", "1.2GiB")
