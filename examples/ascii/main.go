@@ -11,9 +11,10 @@ func main() {
 	fmt.Println(ascii.Is("Hello World")) // true
 	fmt.Println(ascii.Is("Pokémon"))     // false
 
-	// Printable ASCII check
-	fmt.Println(ascii.IsPrintable("Hello!"))  // true
-	fmt.Println(ascii.IsPrintable("Hello\n")) // false
+	// Printable ASCII check, control characters including DEL are rejected
+	fmt.Println(ascii.IsPrintable("Hello!"))    // true
+	fmt.Println(ascii.IsPrintable("Hello\n"))   // false
+	fmt.Println(ascii.IsPrintable("Hello\x7f")) // false
 
 	// Extended ASCII check
 	fmt.Println(ascii.IsExtended("Pokémon")) // true
