@@ -383,6 +383,14 @@ func Test_Add(t *testing.T) {
 			errSTR: bytesize.ErrIntegerOverflow,
 			errINT: bytesize.ErrIntegerOverflow,
 		},
+		{
+			name:   "add invalid value",
+			base:   "42MiB",
+			inSTR:  "hoho!",
+			inINT:  0,
+			want:   "42MiB",
+			errSTR: strconv.ErrSyntax,
+		},
 	}
 
 	for _, tt := range tests {

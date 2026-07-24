@@ -358,14 +358,11 @@ func (s Size) String() string {
 	return s.r
 }
 
-// exponentFromSize determines the appropriate IEC binary for a given byte size.
-// It returns the index into ByteValueIEC/ByteSymbolIEC arrays corresponding to
-// the largest unit that can represent the size.
+// exponentFromSize determines the appropriate IEC binary for a given byte
+// size. It returns the index into ByteValueIEC/ByteSymbolIEC arrays
+// corresponding to the largest unit that can represent the size. The caller
+// must pass a finite positive value, ToString filters everything else.
 func exponentFromSize(size float64) int {
-	if size == 0 {
-		return 0
-	}
-
 	// Find the exponent of the largest unit by dividing the size by
 	// the multiplier until the size is less than the multiplier.
 	var exp int
