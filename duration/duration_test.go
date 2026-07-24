@@ -41,9 +41,32 @@ func TestDuration_UnmarshalJSON(t *testing.T) {
 			want: -time.Second,
 		},
 		{
-			name: "fractional nanoseconds truncated",
-			give: `{"duration": 1000000000.5}`,
-			want: time.Second,
+			name: "integer above float64 precision",
+			give: `{"duration": 9007199254740993}`,
+			want: time.Duration(9007199254740993),
+		},
+		{
+			name: "maximum int64 nanoseconds",
+			give: `{"duration": 9223372036854775807}`,
+			want: time.Duration(math.MaxInt64),
+		},
+		{
+			name:      "number overflowing int64",
+			give:      `{"duration": 9223372036854775808}`,
+			wantErr:   true,
+			wantErrIs: duration.ErrBadDuration,
+		},
+		{
+			name:      "huge scientific notation number",
+			give:      `{"duration": 1e300}`,
+			wantErr:   true,
+			wantErrIs: duration.ErrBadDuration,
+		},
+		{
+			name:      "fractional number",
+			give:      `{"duration": 1000000000.5}`,
+			wantErr:   true,
+			wantErrIs: duration.ErrBadDuration,
 		},
 		{
 			name:        "invalid duration string",
@@ -95,6 +118,19 @@ func TestDuration_UnmarshalJSON(t *testing.T) {
 				t.Errorf("Duration = %v, want %v", obj.Duration.Duration, tt.want)
 			}
 		})
+	}
+}
+
+func TestDuration_UnmarshalJSON_Null(t *testing.T) {
+	obj := struct {
+		Duration duration.Duration `json:"duration"`
+	}{Duration: duration.Duration{Duration: 5 * time.Second}}
+
+	if err := json.Unmarshal([]byte(`{"duration": null}`), &obj); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got := obj.Duration.Duration; got != 5*time.Second {
+		t.Errorf("null changed the value to %v, want it left untouched", got)
 	}
 }
 
