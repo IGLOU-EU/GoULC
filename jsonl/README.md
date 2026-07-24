@@ -9,17 +9,25 @@ A Go package for handling JSON Lines (JSONL) data. It provides simple and effici
 - **🔌 Interfacing**:
   - `Marshal[T any]` and `Unmarshal[T any]` functions using Go Generics
   - `UnmarshalStream[T any]` for memory-efficient parsing from any `io.Reader`
+  - `UnmarshalStreamLimit[T any]` to choose the accepted line size bound
   - Seamless integration with standard `encoding/json`
   - Compliant with the [JSON Lines specification](https://jsonlines.org/)
 
 - **🔄 Capabilities**:
   - Safely encode slices of any type into newline-separated JSON objects
   - Gracefully decode JSONL data streams into typed slices
-  - Properly handles line terminators and ignores empty trailing lines
+  - Properly handles LF and CRLF terminators and ignores empty trailing lines
+
+- **🛡️ Robustness**:
+  - Stream lines longer than `DefaultMaxLineSize` (16 MiB) are rejected with
+    `ErrLineTooLong` instead of being buffered without bound
+  - Blank lines are rejected with `ErrBlankLine`, per the JSONL specs
+  - Errors carry the offending line number, match causes with `errors.Is`
+  - Slice preallocation is capped, so hostile input cannot force large
+    memory reservations before validation
 
 - **🛠️ Utility**:
   - Fast execution by pre-allocating buffer capacities
-  - Strict validation against blank lines to respect JSONL specs
   - Returns `nil` without error for empty inputs or empty slices
 
 ## 📝 Examples
