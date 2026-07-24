@@ -275,6 +275,53 @@ func Test_New(t *testing.T) {
 	}
 }
 
+func TestByteSize_IsZero(t *testing.T) {
+	half, err := bytesize.New("0.5")
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		give bytesize.Size
+		want bool
+	}{
+		{
+			name: "zero value",
+			give: bytesize.Size{},
+			want: true,
+		},
+		{
+			name: "new int zero",
+			give: bytesize.NewInt(0),
+			want: true,
+		},
+		{
+			name: "positive value",
+			give: bytesize.NewInt(1),
+			want: false,
+		},
+		{
+			name: "negative value",
+			give: bytesize.NewInt(-1),
+			want: false,
+		},
+		{
+			name: "fractional bytes only",
+			give: half,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.give.IsZero(); got != tt.want {
+				t.Errorf("Result does not match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func Test_Add(t *testing.T) {
 	tests := []struct {
 		name   string

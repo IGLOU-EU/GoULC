@@ -26,6 +26,13 @@ import (
 	"errors"
 )
 
+// Compile-time interface conformance checks. They break the build if a
+// method signature drifts from its contract.
+var (
+	_ json.Marshaler   = Size{}
+	_ json.Unmarshaler = (*Size)(nil)
+)
+
 // ErrJSONInvalidType reports a JSON value that is neither a string nor a
 // number. Callers match it with errors.Is.
 var ErrJSONInvalidType = errors.New(

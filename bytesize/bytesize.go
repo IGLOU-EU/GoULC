@@ -35,8 +35,11 @@ package bytesize
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
+
+	"gitlab.com/iglou.eu/goulc/contract"
 )
 
 // Size represents a byte size value with both truncated integer and exact
@@ -58,6 +61,13 @@ type Size struct {
 	// This ensures consistent formatting and unit display (e.g., "42.5MiB").
 	r string
 }
+
+// Compile-time interface conformance checks. They break the build if a
+// method signature drifts from its contract.
+var (
+	_ fmt.Stringer      = Size{}
+	_ contract.IsZeroer = Size{}
+)
 
 const (
 	// Base IEC binary units in bytes, each a power of 1024
@@ -301,6 +311,13 @@ func (s Size) Bytes() int64 {
 // (e.g., "42.42MiB" => 44480593.92)
 func (s Size) Exact() float64 {
 	return s.f
+}
+
+// IsZero reports whether the Size is zero, following the time.Time.IsZero
+// convention. It lets the encoding/json ",omitzero" tag option (Go 1.24+)
+// omit zero Size fields at marshaling.
+func (s Size) IsZero() bool {
+	return s.f == 0
 }
 
 // Add adds the given size string to the current Size.
