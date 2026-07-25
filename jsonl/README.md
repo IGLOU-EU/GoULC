@@ -16,7 +16,7 @@ A Go package for handling JSON Lines (JSONL) data. It provides simple and effici
 - **🔄 Capabilities**:
   - Safely encode slices of any type into newline-separated JSON objects
   - Gracefully decode JSONL data streams into typed slices
-  - Properly handles LF and CRLF terminators and ignores empty trailing lines
+  - Properly handles LF and CRLF terminators and ignores the final line terminator
 
 - **🛡️ Robustness**:
   - Stream lines longer than `DefaultMaxLineSize` (16 MiB) are rejected with
