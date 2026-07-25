@@ -89,12 +89,13 @@ func (s *String) Scan(src any) error {
 	return nil
 }
 
-// String is the Stringer, it returns a clear string representation
+// String implements the Stringer interface and returns a clear string
+// representation.
 func (g GormString) String() string {
 	return string(g)
 }
 
-// Hiding is to return an obfuscated string
+// Hiding returns an obfuscated string.
 func (_ GormString) Hiding() string {
 	return obfuscated
 }

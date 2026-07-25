@@ -86,7 +86,8 @@ func (_ *Basic) Update() error {
 	return nil
 }
 
-// Header return the Header name and Header line with prefix and base64 value.
+// Header returns the header name and the header line with prefix and
+// base64 value.
 // Basic auth does not require method, url or body to build the header.
 // RFC 2617 §2: https://www.rfc-editor.org/rfc/rfc2617#section-2
 func (b *Basic) Header(_ string, _ *url.URL, _ []byte,
@@ -111,8 +112,8 @@ func (b *Basic) Clone() Authenticator {
 	}
 }
 
-// BasicUserPass return the base64 value of userid and password separated by a
-// single colon ":". Like defined into the Basic auth RFC.
+// BasicUserPass returns the base64 value of userid and password separated
+// by a single colon ":", as defined in the Basic auth RFC.
 // RFC 2617 §2: https://www.rfc-editor.org/rfc/rfc2617#section-2
 func BasicUserPass(userid, password string) string {
 	return base64.StdEncoding.EncodeToString(
