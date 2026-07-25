@@ -40,6 +40,54 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
   `Format` function (formerly `PathFormatting`) now also collapses repeated
   slashes and resolves `.` and `..` segments.
 
+## 🔑 Authentication providers
+
+### Basic (`http/client/auth`)
+
+```go
+func NewBasic(userID string, password hided.String) (Basic, error)
+```
+
+`NewBasic` precomputes and caches the `Basic ...` header value. Mutating
+`UserID` or `Password` afterward leaves the cached header stale, rebuild
+the instance with `NewBasic` instead.
+
+### Digest (`http/client/auth`)
+
+`Digest.Password` is a `hided.String`, so `fmt` verbs and marshaling
+cannot leak it. The constructor and every hashing step return an error:
+
+```go
+func NewDigest(
+    username string, password hided.String, parameters DigestParameters,
+) (Digest, error)
+func (d *DigestParameters) Hash(s []byte) (string, error)
+func (d *Digest) A1() (string, error)
+func (d *Digest) A2(method string, body []byte) (string, error)
+func (d *Digest) Response(a1, a2 string) (string, error)
+```
+
+`Header` validates the parameters before signing and can return:
+
+- `ErrNoCNonce`: QOP is set without a client nonce
+- `ErrNoNC`: QOP is set without a nonce count
+- `ErrUnknownQOP`: the QOP value is not supported
+- `ErrUnknownAlgorithm`: the hash algorithm is not supported
+
+### OAuth2 Client Credentials (`http/client/auth/oauth2`)
+
+- `TokenResponse.ExpiresIn` is an `int64` lifetime in seconds, as
+  defined by RFC 6749 §5.1. It was formerly a `duration.Duration`
+  decoded as nanoseconds, which made tokens expire instantly.
+- `Response` now exposes the named fields `TokenResponse` and
+  `ErrorResponse` instead of embedding both types.
+- `ErrorResponse.IsEmpty` reports whether the server returned an error,
+  keying on the required `error` code of RFC 6749 §5.2.
+- The error variables follow the Go convention: `ErrUnexpectedStatusCode`,
+  `ErrEmptyBody`, and `ErrNoToken` (formerly `Error...` names).
+- The token cache is safe for concurrent use, and tokens are refreshed
+  30 seconds before expiry so an aging token is never sent in flight.
+
 ## 📝 Examples
 
 Usage examples can be found in the [examples](../examples/http) directory.   
