@@ -18,7 +18,6 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
   - Configurable redirects
   - Custom header management
   - Query parameter handling
-  - Error rate tracking
   - Rate limiting support
   - Response timing
   - Context cancellation

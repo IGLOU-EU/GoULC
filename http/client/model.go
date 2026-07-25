@@ -27,18 +27,11 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
-
-// ErrorHistory stores information about a failed request.
-type ErrorHistory struct {
-	URL        string
-	StatusCode int
-	Timestamp  time.Time
-	IsError    bool
-}
 
 // Redirects stores information about a HTTP redirection.
 type Redirects struct {
@@ -53,37 +46,42 @@ type Redirects struct {
 type Options struct {
 	// OnlyHTTPS enforces the use of HTTPS protocol.
 	// Default: true
-	OnlyHTTPS bool
+	OnlyHTTPS bool `json:",omitzero"`
 
 	// Follow enables automatic following of HTTP 3xx redirects.
 	// Default: true
-	Follow bool
+	Follow bool `json:",omitzero"`
 
 	// FollowAuth determines if authorization headers should be preserved
 	// when redirecting to a different host. It's false by default to prevent
 	// credential leakage.
+	//
+	// Its practical scope is limited to subdomains and port changes: the
+	// standard library strips the Authorization header on its own, before
+	// this policy runs, whenever the redirect target hostname is neither
+	// the initial one nor a subdomain of it. That comparison ignores ports.
 	// Default: false
-	FollowAuth bool
+	FollowAuth bool `json:",omitzero"`
 
 	// FollowReferer preserves the referer header on redirects.
 	// Default: true
-	FollowReferer bool
+	FollowReferer bool `json:",omitzero"`
 
 	// MaxRedirect specifies the maximum number of redirects to follow.
 	// Default: 2
-	MaxRedirect int
+	MaxRedirect int `json:",omitzero"`
 
 	// Timeout sets the maximum duration for the entire request.
 	// Default: 35s
-	Timeout time.Duration
+	Timeout time.Duration `json:",omitzero"`
 
 	// DisableTLSVerify skips TLS certificate validation when true.
 	// Default: false
-	DisableTLSVerify bool
+	DisableTLSVerify bool `json:",omitzero"`
 
 	// RateLimiter allows for rate limiting by implementing the Wait method.
 	// Default: nil
-	RateLimiter Ratelimiter
+	RateLimiter Ratelimiter `json:"-"`
 }
 
 // Client manages its own configuration. The configuration can be safely
@@ -91,16 +89,15 @@ type Options struct {
 // that inherit the parent's configuration but can be modified independently.
 type Client struct {
 	closed         bool
-	activeRequests int32
+	activeRequests atomic.Int32
 	logger         *slog.Logger
+
+	// mu guards the client state so concurrent use stays safe
+	mu sync.RWMutex
 
 	closer  []func() error
 	context context.Context
 	cancel  context.CancelFunc
-
-	// Mu is the mutex to lock when accessing or modifying the client
-	// It's used to ensure thread-safety
-	Mu *sync.RWMutex
 
 	// Options contains the client's configuration settings
 	Options Options
@@ -116,10 +113,6 @@ type Client struct {
 
 	// Query stores URL query parameters
 	Query url.Values
-
-	// ErrorHistory tracks request errors for the last minute
-	// Used to calculate error rate metrics
-	ErrorHistory []ErrorHistory
 }
 
 // Response encapsulates the HTTP response details and provides access to
@@ -131,8 +124,6 @@ type Client struct {
 // using an Unmarshaler implementation. This allows for automatic parsing of
 // response data into appropriate Go types.
 type Response struct {
-	raw *http.Response
-
 	// Success indicates if the request was successful
 	// (status code < 400, with special handling for 401)
 	Success bool
@@ -164,8 +155,4 @@ type Response struct {
 	// Trace contains information about the redirects
 	// that occurred during the request
 	Trace []Redirects
-
-	// ErrorRate is the percentage of failed requests in
-	// the last minute (shared across client)
-	ErrorRate float64
 }

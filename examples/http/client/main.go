@@ -128,7 +128,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #06: Look there metrics in your face.\nStatus: %v\nResponseTime: %v\nTrace: %#v\nErrorRate: %v%%\n", res.Status, res.ResponseTime, res.Trace, res.ErrorRate)
+	fmt.Printf("\nTest #06: Look there metrics in your face.\nStatus: %v\nResponseTime: %v\nTrace: %#v\n", res.Status, res.ResponseTime, res.Trace)
 
 	// #07 Close the client
 	// To release clients resources, you need to call Close() method, that will
@@ -142,7 +142,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #07: Client closed successfully, and child are closed too in cascade.\n> Main client: %#v\n> Child client: %#v\n", httpClient, httpClientWeapons)
+	fmt.Printf("\nTest #07: Client closed successfully, and child are closed too in cascade.\n> Main client: %#v\n> Child client: %#v\n", &httpClient, httpClientWeapons)
 
 }
 
