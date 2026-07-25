@@ -234,17 +234,17 @@ func TestNew(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name:       "HTTP URL with OnlyHTTPS",
+			name:       "HTTP URL with HTTPS enforced",
 			serverURL:  "http://candlekeep.faerun",
 			opt:        &client.OptDefault,
 			wantScheme: "https",
 			wantErr:    false,
 		},
 		{
-			name:      "HTTP URL without OnlyHTTPS",
+			name:      "HTTP URL with HTTPS disabled",
 			serverURL: "http://candlekeep.faerun",
 			opt: &client.Options{
-				OnlyHTTPS: false,
+				DisableHTTPS: true,
 			},
 			wantScheme: "http",
 			wantErr:    false,
@@ -263,7 +263,7 @@ func TestNew(t *testing.T) {
 			name:      "with custom options",
 			serverURL: "https://candlekeep.faerun",
 			opt: &client.Options{
-				OnlyHTTPS:        true,
+				DisableHTTPS:     false,
 				Follow:           true,
 				FollowAuth:       true,
 				FollowReferer:    true,
@@ -1003,7 +1003,7 @@ func TestClient_Clone(t *testing.T) {
 	}
 
 	opt := client.Options{
-		OnlyHTTPS:        true,
+		DisableHTTPS:     false,
 		Follow:           true,
 		FollowAuth:       true,
 		MaxRedirect:      5,
@@ -1296,7 +1296,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 			name: "strip auth on https to http downgrade",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = false
+				c.Options.DisableHTTPS = true
 				c.Options.FollowAuth = true
 			},
 			checkTrace:     true,
@@ -1306,10 +1306,10 @@ func TestClient_FollowRedirects(t *testing.T) {
 			expectedAuth:   "", // credentials must not travel in cleartext
 		},
 		{
-			name: "keep auth when only https re-upgrades the redirect",
+			name: "keep auth when https enforcement re-upgrades the redirect",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = true
+				c.Options.DisableHTTPS = false
 			},
 			checkTrace:     true,
 			requestURL:     "http://new-reno.wasteland" + redirectURL,
@@ -1323,7 +1323,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 			name: "enforce HTTPS on HTTP URL",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = true
+				c.Options.DisableHTTPS = false
 			},
 			checkTrace:     true,
 			requestURL:     "http://gecko.wasteland" + redirectURL,
@@ -1333,7 +1333,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 			name: "keep HTTP URL as is",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = false
+				c.Options.DisableHTTPS = true
 			},
 			checkTrace:     true,
 			requestURL:     "http://gecko.wasteland" + redirectURL,

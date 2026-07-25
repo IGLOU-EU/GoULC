@@ -108,7 +108,7 @@ var (
 // - TLS verification enabled
 // - Response bodies capped at 32 MiB to prevent memory exhaustion
 var OptDefault = Options{
-	OnlyHTTPS:        true,
+	DisableHTTPS:     false,
 	Follow:           true,
 	FollowAuth:       false,
 	FollowReferer:    true,
@@ -136,7 +136,7 @@ var OptDefault = Options{
 // New validates the `serverURL` and the provided options, ensuring that
 // timeout and redirect limits are non-negative and that the context
 // is not nil. It removes trailing slashes from the `serverURL` for
-// consistency, enforces HTTPS if the `OnlyHTTPS` option is set, formats
+// consistency, enforces HTTPS unless the `DisableHTTPS` option is set, formats
 // the URL path, and parses query parameters. If an authenticator is provided,
 // it is cloned for the new Client.
 //
@@ -207,8 +207,8 @@ func New(
 	baseURL := *parsedURL
 	baseURL.Path = path.Format(baseURL.Path)
 
-	if opt.OnlyHTTPS && baseURL.Scheme == "http" {
-		logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
+	if !opt.DisableHTTPS && baseURL.Scheme == "http" {
+		logger.Debug("Scheme updated to HTTPS by default HTTPS enforcement")
 		baseURL.Scheme = "https"
 	}
 
@@ -528,8 +528,8 @@ func (c *Client) FollowRedirects(
 				errors.New("stopped after "+strconv.Itoa(nb)+" redirects"))
 		}
 
-		// Enforce HTTPS on redirects if configured
-		if c.Options.OnlyHTTPS && req.URL.Scheme == "http" {
+		// Enforce HTTPS on redirects unless explicitly disabled
+		if !c.Options.DisableHTTPS && req.URL.Scheme == "http" {
 			req.URL.Scheme = "https"
 		}
 
