@@ -51,24 +51,26 @@ func TestSetColorLevel(t *testing.T) {
 	}
 }
 
-func TestSourceBuilder(t *testing.T) {
+func TestSyslogPrefixCache(t *testing.T) {
 	tests := []struct {
-		name string
-		file string
-		line int
-		want string
+		name  string
+		level slog.Level
 	}{
-		{"SimpleFile", "main.go", 42, "main.go:42: "},
-		{"PackagePath", "pkg/handler.go", 1, "pkg/handler.go:1: "},
-		{"DeepPath", "a/b/c/file.go", 999, "a/b/c/file.go:999: "},
-		{"ZeroLine", "zero.go", 0, "zero.go:0: "},
+		{"Debug", slog.LevelDebug},
+		{"Info", slog.LevelInfo},
+		{"Warn", slog.LevelWarn},
+		{"Error", slog.LevelError},
+		{"Unknown", slog.Level(42)},
+		{"AboveError", slog.LevelError + 4},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sourceBuilder(tt.file, tt.line)
-			if got != tt.want {
-				t.Errorf("sourceBuilder(%q, %d) = %q, want %q", tt.file, tt.line, got, tt.want)
+			got := syslogPrefix(tt.level)
+
+			want := BuildSyslogPrefix(tt.level)
+			if got != want {
+				t.Errorf("syslogPrefix(%v) = %q, want %q", tt.level, got, want)
 			}
 		})
 	}

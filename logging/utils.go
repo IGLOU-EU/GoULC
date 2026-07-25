@@ -24,7 +24,6 @@ package logging
 import (
 	"log/slog"
 	"runtime"
-	"strconv"
 	"strings"
 )
 
@@ -57,23 +56,38 @@ func setColorLevel(l slog.Level) color {
 	return colorMagenta
 }
 
-// sourceBuilder formats a source code location as "file:line: " for use
-// in log output prefixes.
-func sourceBuilder(file string, line int) string {
-	var source strings.Builder
-	source.WriteString(file)
-	source.WriteRune(':')
-	source.WriteString(strconv.Itoa(line))
-	source.WriteString(": ")
-	return source.String()
+// The syslog prefixes of the four standard levels are computed once,
+// since writeSyslogPrefix runs for every line of every record when
+// ForceSyslog is enabled.
+var (
+	syslogPrefixDebug = BuildSyslogPrefix(slog.LevelDebug)
+	syslogPrefixInfo  = BuildSyslogPrefix(slog.LevelInfo)
+	syslogPrefixWarn  = BuildSyslogPrefix(slog.LevelWarn)
+	syslogPrefixError = BuildSyslogPrefix(slog.LevelError)
+)
+
+// syslogPrefix returns the precomputed syslog prefix for the given level.
+// Unknown levels fall back to the INFO prefix, matching SyslogSeverity.
+func syslogPrefix(l slog.Level) string {
+	switch l {
+	case slog.LevelDebug:
+		return syslogPrefixDebug
+	case slog.LevelWarn:
+		return syslogPrefixWarn
+	case slog.LevelError:
+		return syslogPrefixError
+	default:
+		return syslogPrefixInfo
+	}
 }
 
 // source returns a Source describing the caller's source code position.
 // It trims the file path using basePath to make it more readable.
-func source(basePath string, pc uintptr) *slog.Source {
+// The Source is returned by value to keep it off the heap.
+func source(basePath string, pc uintptr) slog.Source {
 	fs := runtime.CallersFrames([]uintptr{pc})
 	f, _ := fs.Next()
-	return &slog.Source{
+	return slog.Source{
 		Function: f.Function,
 		File:     strings.TrimPrefix(f.File, basePath),
 		Line:     f.Line,
