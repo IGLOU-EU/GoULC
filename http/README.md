@@ -11,6 +11,9 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
   - Digest Authentication
   - OAuth2 Client Credentials
   - Extensible authentication interface
+  - An authenticator is shared across in-flight requests and keeps the
+    cross-request state (token caches), so it must be safe for
+    concurrent use
 
 - **🛠️ Client Features:**
   - Thread-safe operations

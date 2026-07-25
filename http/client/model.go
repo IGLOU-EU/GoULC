@@ -118,7 +118,10 @@ type Client struct {
 	// Header stores HTTP headers to be sent with requests
 	Header http.Header
 
-	// Auth contains authentication configuration
+	// Auth contains authentication configuration. The instance is the
+	// holder of cross-request state (token caches, refreshes) and is
+	// shared as-is with every in-flight request, so implementations
+	// must be safe for concurrent use.
 	Auth auth.Authenticator
 
 	// URL stores the base URL for requests
