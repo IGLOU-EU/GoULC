@@ -32,10 +32,20 @@ import (
 )
 
 var (
+	// ErrWriterOutNil reports a Writer whose Out stream is nil.
 	ErrWriterOutNil = errors.New(
 		"out writer is nil, this is probably a mistake")
+	// ErrLogLevelUnknown reports a Config.Level outside the known set.
 	ErrLogLevelUnknown = errors.New("unknown log level provided")
 )
+
+// Config is an alias of the model package type so common usage only
+// needs the logging import.
+type Config = model.Config
+
+// Writer is an alias of the model package type so common usage only
+// needs the logging import.
+type Writer = model.Writer
 
 // DefaultWriter provides the standard output configuration where
 // normal logs go to os.Stdout and error logs to os.Stderr
@@ -105,12 +115,9 @@ func NewWithWriter(
 		localCfg.Cancel,
 		&w,
 		&HandlerOptions{
-			Config: model.Config{
-				Colored:     localCfg.Colored,
-				AddSource:   localCfg.AddSource,
-				ForceSyslog: localCfg.ForceSyslog,
-				TimeFormat:  localCfg.TimeFormat,
-			},
+			// The whole Config is carried over so a new field cannot be
+			// silently lost in a field-by-field copy.
+			Config: localCfg,
 			HandlerOptions: slog.HandlerOptions{
 				AddSource: localCfg.AddSource,
 				Level:     level,
@@ -121,10 +128,15 @@ func NewWithWriter(
 	)), nil
 }
 
-// Critical logs a critical error message along with any provided attributes,
-// prints the stack trace, and then terminates the program with exit code 1.
-// The function accepts a Logger instance, a message string,
-// and optional attributes.
+// Critical logs a critical error message along with any provided
+// attributes and the current stack trace, then terminates the program.
+//
+// Termination is abrupt by design. When the logger's handler is a
+// *Handler carrying a cancel function (Config.Cancel), that function is
+// called instead and the caller owns the shutdown. In every other case
+// Critical calls os.Exit(1), which skips deferred functions and flushes
+// nothing. Reserve it for main-level failure handling, never call it
+// from library code.
 func Critical(l *slog.Logger, msg string, attrs ...any) {
 	l.With(attrs...).Error(
 		"Critical error",
