@@ -965,6 +965,45 @@ func TestClient_Clone(t *testing.T) {
 	}
 }
 
+// TestClient_CloneCloseRace runs Clone against a concurrent Close: every
+// clone handed out must be closed in cascade, none may end up orphaned.
+func TestClient_CloneCloseRace(t *testing.T) {
+	c, err := client.New(context.Background(),
+		"https://vault13.wasteland", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	const goroutines = 32
+	clones := make([]*client.Client, goroutines)
+	start := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			clones[i] = c.Clone()
+		}(i)
+	}
+
+	close(start)
+	if err := c.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	wg.Wait()
+
+	for i, clone := range clones {
+		if clone == nil {
+			continue
+		}
+		if !clone.IsClosed() {
+			t.Errorf("clone %d survived the parent Close", i)
+		}
+	}
+}
+
 type testMarshaler struct {
 	Message string `json:"message"`
 }
