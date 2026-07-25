@@ -2,6 +2,7 @@ package oauth2_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -154,7 +155,7 @@ func TestClientCredentials_Update(t *testing.T) {
 		name           string
 		mockResponse   string
 		mockStatusCode int
-		wantErr        bool
+		wantErr        error
 	}{
 		{
 			name: "successful token acquisition",
@@ -165,19 +166,24 @@ func TestClientCredentials_Update(t *testing.T) {
 				"scope": "read write"
 			}`,
 			mockStatusCode: http.StatusOK,
-			wantErr:        false,
 		},
 		{
 			name:           "server error",
 			mockResponse:   `{"error": "server_error", "error_description": "Internal error"}`,
 			mockStatusCode: http.StatusInternalServerError,
-			wantErr:        true,
+			wantErr:        oauth2.ErrUnexpectedStatusCode,
 		},
 		{
 			name:           "empty response",
 			mockResponse:   "",
 			mockStatusCode: http.StatusOK,
-			wantErr:        true,
+			wantErr:        oauth2.ErrEmptyBody,
+		},
+		{
+			name:           "response without token",
+			mockResponse:   `{"token_type": "Bearer", "expires_in": 3600}`,
+			mockStatusCode: http.StatusOK,
+			wantErr:        oauth2.ErrNoToken,
 		},
 	}
 
@@ -190,11 +196,11 @@ func TestClientCredentials_Update(t *testing.T) {
 
 			before := time.Now()
 			err := cc.Update()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Update() error = %v, wantErr %v", err, tt.wantErr)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Update() error = %v, want %v", err, tt.wantErr)
 			}
 
-			if tt.wantErr {
+			if tt.wantErr != nil {
 				return
 			}
 
