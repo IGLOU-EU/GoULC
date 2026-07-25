@@ -40,14 +40,20 @@ const (
 )
 
 // Verify Basic implements Authenticator interface
-var _ Authenticator = &Basic{}
+var _ Authenticator = (*Basic)(nil)
 
-// Basic struct implements the Authenticator interface
+// Basic struct implements the Authenticator interface.
+// Mutating UserID or Password after NewBasic leaves the precomputed
+// header stale, rebuild the instance with NewBasic instead.
 type Basic struct {
 	// UserID is the user ID
 	UserID string
 	// Password is the password in hidden mode
 	Password hided.String
+
+	// header caches the "Basic ..." value so the credentials are not
+	// re-encoded on every request.
+	header string
 }
 
 // NewBasic creates a new Basic authentication instance with
@@ -65,6 +71,7 @@ func NewBasic(userID string, password hided.String) (Basic, error) {
 	return Basic{
 		UserID:   userID,
 		Password: password,
+		header:   BasicValuePrefix + BasicUserPass(userID, password.Reveal()),
 	}, nil
 }
 
@@ -84,8 +91,14 @@ func (_ *Basic) Update() error {
 // RFC 2617 §2: https://www.rfc-editor.org/rfc/rfc2617#section-2
 func (b *Basic) Header(_ string, _ *url.URL, _ []byte,
 ) (headerKey, headerValue string, err error) {
-	return BasicHeaderName, BasicValuePrefix +
-		BasicUserPass(b.UserID, hided.Value[string](b.Password)), nil
+	// Instances built without NewBasic have no precomputed header,
+	// encode the credentials on the fly for them.
+	if b.header == "" {
+		return BasicHeaderName, BasicValuePrefix +
+			BasicUserPass(b.UserID, b.Password.Reveal()), nil
+	}
+
+	return BasicHeaderName, b.header, nil
 }
 
 // Clone creates a deep copy of the instance.
@@ -94,6 +107,7 @@ func (b *Basic) Clone() Authenticator {
 	return &Basic{
 		UserID:   b.UserID,
 		Password: b.Password,
+		header:   b.header,
 	}
 }
 

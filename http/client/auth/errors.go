@@ -32,8 +32,15 @@ var (
 	ErrNoRealm = errors.New("you must provide a realm parameter")
 	// ErrNoNonce is returned when the nonce is empty
 	ErrNoNonce = errors.New("you must provide a nonce parameter")
+	// ErrNoCNonce is returned when QOP is set without a client nonce
+	ErrNoCNonce = errors.New(
+		"you must provide a cnonce parameter when qop is set")
+	// ErrNoNC is returned when QOP is set without a nonce count
+	ErrNoNC = errors.New("you must provide a nc parameter when qop is set")
 	// ErrNoURI is returned when the URI is empty
 	ErrNoURI = errors.New("you must provide a URI parameter")
 	// ErrUnknownAlgorithm is returned when the algorithm is unknown
 	ErrUnknownAlgorithm = errors.New("unknown algorithm provided")
+	// ErrUnknownQOP is returned when the QOP value is not supported
+	ErrUnknownQOP = errors.New("unknown qop value provided")
 )
