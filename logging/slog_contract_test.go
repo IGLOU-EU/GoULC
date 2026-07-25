@@ -417,6 +417,68 @@ func TestHandler_UnknownSourceFallback(t *testing.T) {
 	}
 }
 
+// TestHandler_HostileGroupNameEscaped covers the [G:...] marker: a group
+// name is attacker-influenced data like any attribute, so control bytes
+// must never reach the output through it either.
+func TestHandler_HostileGroupNameEscaped(t *testing.T) {
+	const hostile = "grp\r\n<6>injected \x1b[31mred"
+
+	t.Run("marker_and_keys_quoted", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := &model.Writer{Out: &buf, Err: &buf}
+		h := NewHandler(nil, w, nil).WithGroup(hostile)
+
+		r := slog.NewRecord(time.Now(), slog.LevelInfo, "msg", 0)
+		r.AddAttrs(slog.String("k", "v"))
+		if err := h.Handle(context.Background(), r); err != nil {
+			t.Fatalf("Handle() error: %v", err)
+		}
+
+		out := buf.String()
+		for i := 0; i < len(out); i++ {
+			c := out[i]
+			// The line separator and the attribute indent are the only
+			// control bytes the format itself emits.
+			if c == '\n' || c == '\t' {
+				continue
+			}
+			if c < 0x20 || c == 0x7f {
+				t.Fatalf("raw control byte %#02x at offset %d in %q", c, i, out)
+			}
+		}
+
+		want := `[G:"grp\r\n<6>injected \x1b[31mred"]`
+		if !strings.Contains(out, want) {
+			t.Errorf("expected quoted group marker %q, got %q", want, out)
+		}
+	})
+
+	t.Run("replace_attr_sees_raw_name", func(t *testing.T) {
+		var gotGroups []string
+		rep := func(groups []string, a slog.Attr) slog.Attr {
+			gotGroups = append([]string(nil), groups...)
+			return a
+		}
+
+		var buf bytes.Buffer
+		w := &model.Writer{Out: &buf, Err: &buf}
+		h := NewHandler(nil, w, &HandlerOptions{
+			HandlerOptions: slog.HandlerOptions{ReplaceAttr: rep},
+		}).WithGroup(hostile)
+
+		r := slog.NewRecord(time.Now(), slog.LevelInfo, "msg", 0)
+		r.AddAttrs(slog.String("k", "v"))
+		if err := h.Handle(context.Background(), r); err != nil {
+			t.Fatalf("Handle() error: %v", err)
+		}
+
+		want := []string{hostile}
+		if !reflect.DeepEqual(gotGroups, want) {
+			t.Errorf("ReplaceAttr groups = %q, want raw %q", gotGroups, want)
+		}
+	})
+}
+
 func TestHandler_ErrorLevelRouting(t *testing.T) {
 	tests := []struct {
 		name    string
