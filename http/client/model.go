@@ -76,8 +76,17 @@ type Options struct {
 	Timeout time.Duration `json:",omitzero"`
 
 	// DisableTLSVerify skips TLS certificate validation when true.
+	// It is captured when New builds the shared transport and cannot
+	// be changed afterward.
 	// Default: false
 	DisableTLSVerify bool `json:",omitzero"`
+
+	// MaxBodySize caps how many response body bytes are read into
+	// memory, guarding against malicious or broken servers. Requests
+	// whose response body exceeds the limit fail with ErrBodyTooLarge.
+	// Zero means no limit, which is only safe with trusted servers.
+	// Default: 32 MiB
+	MaxBodySize int64 `json:",omitzero"`
 
 	// RateLimiter allows for rate limiting by implementing the Wait method.
 	// Default: nil

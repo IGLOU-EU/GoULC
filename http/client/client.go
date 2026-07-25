@@ -71,6 +71,15 @@ var (
 	// ErrInvalidRedirectLimit is returned when the redirect limit is invalid
 	ErrInvalidRedirectLimit = errors.New("invalid redirect limit")
 
+	// ErrInvalidBodyLimit is returned when the response body size limit
+	// is negative
+	ErrInvalidBodyLimit = errors.New("invalid response body size limit")
+
+	// ErrBodyTooLarge is returned when a response body exceeds
+	// Options.MaxBodySize
+	ErrBodyTooLarge = errors.New(
+		"response body exceeds the configured size limit")
+
 	// ErrNilContext is returned when a nil context is provided
 	ErrNilContext = errors.New("nil context was provided")
 
@@ -90,6 +99,7 @@ var (
 // - No auth forwarding to other hosts
 // - 35s timeout to prevent hanging
 // - TLS verification enabled
+// - Response bodies capped at 32 MiB to prevent memory exhaustion
 var OptDefault = Options{
 	OnlyHTTPS:        true,
 	Follow:           true,
@@ -98,6 +108,7 @@ var OptDefault = Options{
 	MaxRedirect:      2,
 	Timeout:          35 * time.Second,
 	DisableTLSVerify: false,
+	MaxBodySize:      32 << 20,
 }
 
 // New creates and initializes a new Client with the specified configuration.
@@ -166,6 +177,13 @@ func New(
 			return Client{}, errors.Join(ErrInvalidRedirectLimit,
 				errors.New("redirect limit must be >= 0, got "+
 					strconv.Itoa(opt.MaxRedirect)))
+		}
+
+		// Validate response body size limit
+		if opt.MaxBodySize < 0 {
+			return Client{}, errors.Join(ErrInvalidBodyLimit,
+				errors.New("body size limit must be >= 0, got "+
+					strconv.FormatInt(opt.MaxBodySize, 10)))
 		}
 	} else {
 		opt = &OptDefault
@@ -402,6 +420,13 @@ func (c *Client) FollowRedirects(
 		// Enforce HTTPS on redirects if configured
 		if c.Options.OnlyHTTPS && req.URL.Scheme == "http" {
 			req.URL.Scheme = "https"
+		}
+
+		// Never let credentials issued over TLS travel on a cleartext
+		// downgrade, even toward the same host
+		if req.URL.Scheme == "http" && len(via) > 0 &&
+			via[len(via)-1].URL.Scheme == "https" {
+			req.Header.Del("Authorization")
 		}
 
 		// Apply rate limiting to redirect requests if configured
@@ -712,9 +737,22 @@ func (main *Client) doRequest(
 		"status_code", resp.StatusCode,
 		"content_length", httpRes.ContentLength)
 
-	resp.Body, err = io.ReadAll(httpRes.Body)
+	// Cap the read so a hostile server cannot exhaust memory, one
+	// extra byte makes an over-limit body distinguishable
+	bodyReader := io.Reader(httpRes.Body)
+	if limit := c.Options.MaxBodySize; limit > 0 {
+		bodyReader = io.LimitReader(httpRes.Body, limit+1)
+	}
+
+	resp.Body, err = io.ReadAll(bodyReader)
 	if err != nil {
 		return nil, errors.Join(ErrRequestFailed, err)
+	}
+
+	if limit := c.Options.MaxBodySize; limit > 0 &&
+		int64(len(resp.Body)) > limit {
+		return nil, errors.Join(ErrBodyTooLarge,
+			errors.New("limit is "+strconv.FormatInt(limit, 10)+" bytes"))
 	}
 
 	// Unmarshal response body if an unmarshaler is provided

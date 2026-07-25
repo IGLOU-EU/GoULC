@@ -19,6 +19,7 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
   - Custom header management
   - Query parameter handling
   - Rate limiting support
+  - Response body size limiting (32 MiB with the default options)
   - Response timing
   - Context cancellation
 

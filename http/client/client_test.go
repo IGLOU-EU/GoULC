@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -75,6 +76,7 @@ func TestNew(t *testing.T) {
 		opt           *client.Options
 		logger        *slog.Logger
 		ctx           context.Context
+		wantScheme    string
 		wantErr       bool
 		expectedError error
 	}{
@@ -112,10 +114,20 @@ func TestNew(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name:      "HTTP URL with OnlyHTTPS",
+			name:       "HTTP URL with OnlyHTTPS",
+			serverURL:  "http://candlekeep.faerun",
+			opt:        &client.OptDefault,
+			wantScheme: "https",
+			wantErr:    false,
+		},
+		{
+			name:      "HTTP URL without OnlyHTTPS",
 			serverURL: "http://candlekeep.faerun",
-			opt:       &client.OptDefault,
-			wantErr:   false,
+			opt: &client.Options{
+				OnlyHTTPS: false,
+			},
+			wantScheme: "http",
+			wantErr:    false,
 		},
 		{
 			name:      "with authenticator",
@@ -159,6 +171,15 @@ func TestNew(t *testing.T) {
 			wantErr:       true,
 			expectedError: client.ErrInvalidRedirectLimit,
 		},
+		{
+			name:      "invalid body size limit",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				MaxBodySize: -1,
+			},
+			wantErr:       true,
+			expectedError: client.ErrInvalidBodyLimit,
+		},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +201,10 @@ func TestNew(t *testing.T) {
 
 			if c.Auth != tt.auth {
 				t.Errorf("New() auth = %v, want %v", c.Auth, tt.auth)
+			}
+			if tt.wantScheme != "" && c.URL.Scheme != tt.wantScheme {
+				t.Errorf("New() scheme = %q, want %q",
+					c.URL.Scheme, tt.wantScheme)
 			}
 		})
 	}
@@ -517,6 +542,77 @@ func TestClient_Do_ReusesConnections(t *testing.T) {
 	}
 }
 
+func TestClient_Do_BodyLimit(t *testing.T) {
+	const bodySize = 1024
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(bytes.Repeat([]byte("a"), bodySize))
+		}))
+	defer ts.Close()
+
+	tests := []struct {
+		name      string
+		giveLimit int64
+		wantErrIs error // nil expects a successful read
+	}{
+		{
+			name:      "zero limit reads everything",
+			giveLimit: 0,
+		},
+		{
+			name:      "limit above body size",
+			giveLimit: bodySize + 1,
+		},
+		{
+			name:      "limit equal to body size",
+			giveLimit: bodySize,
+		},
+		{
+			name:      "limit below body size",
+			giveLimit: bodySize - 1,
+			wantErrIs: client.ErrBodyTooLarge,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opt := client.Options{
+				DisableTLSVerify: true,
+				Timeout:          5 * time.Second,
+				MaxBodySize:      tt.giveLimit,
+			}
+
+			c, err := client.New(context.Background(), ts.URL,
+				nil, &opt, nil)
+			if err != nil {
+				t.Fatalf("Failed to create client: %v", err)
+			}
+			defer func() {
+				if err := c.Close(); err != nil {
+					t.Errorf("Close() error = %v", err)
+				}
+			}()
+
+			resp, err := c.Do(http.MethodGet, nil, nil)
+			if tt.wantErrIs != nil {
+				if !errors.Is(err, tt.wantErrIs) {
+					t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			if len(resp.Body) != bodySize {
+				t.Errorf("Do() body length = %d, want %d",
+					len(resp.Body), bodySize)
+			}
+		})
+	}
+}
+
 func TestClient_Close(t *testing.T) {
 	opt := client.OptDefault
 	opt.Timeout = 2 * time.Second
@@ -794,6 +890,33 @@ func TestClient_FollowRedirects(t *testing.T) {
 			requestURL:    baseURL + redirectURL,
 			addAuthHeader: true,
 			expectedAuth:  testToken, // header should be preserved
+		},
+
+		// Scheme downgrade cases
+		{
+			name: "strip auth on https to http downgrade",
+			setup: func(c *client.Client) {
+				c.Options.Follow = true
+				c.Options.OnlyHTTPS = false
+				c.Options.FollowAuth = true
+			},
+			checkTrace:     true,
+			requestURL:     "http://new-reno.wasteland" + redirectURL,
+			addAuthHeader:  true,
+			expectedScheme: "http",
+			expectedAuth:   "", // credentials must not travel in cleartext
+		},
+		{
+			name: "keep auth when only https re-upgrades the redirect",
+			setup: func(c *client.Client) {
+				c.Options.Follow = true
+				c.Options.OnlyHTTPS = true
+			},
+			checkTrace:     true,
+			requestURL:     "http://new-reno.wasteland" + redirectURL,
+			addAuthHeader:  true,
+			expectedScheme: "https",
+			expectedAuth:   testToken, // no cleartext hop, no strip
 		},
 
 		// URL scheme cases
