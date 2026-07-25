@@ -13,12 +13,18 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	"golang.org/x/time/rate"
 
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
+
+// TestMain fails the package when any test leaks a goroutine.
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 // mockAuthenticator implements auth.Authenticator for testing
 type mockAuthenticator struct {
@@ -465,6 +471,50 @@ func TestClient_Do(t *testing.T) {
 			t.Errorf("Do() error = %v, wantErr %v", err, client.ErrClientClosed)
 		}
 	})
+}
+
+func TestClient_Do_ReusesConnections(t *testing.T) {
+	var mu sync.Mutex
+	remotes := make(map[string]struct{})
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			remotes[r.RemoteAddr] = struct{}{}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"message":"ok"}`))
+		}))
+	defer ts.Close()
+
+	opt := client.OptDefault
+	opt.DisableTLSVerify = true
+
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+
+	const requests = 5
+	for range requests {
+		resp, err := c.Do(http.MethodGet, nil, nil)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Do() status = %v, want %v",
+				resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	if len(remotes) != 1 {
+		t.Errorf("distinct connections for %d sequential requests = %d, "+
+			"want 1 (pooled transport)", requests, len(remotes))
+	}
 }
 
 func TestClient_Close(t *testing.T) {

@@ -3,6 +3,7 @@ module gitlab.com/iglou.eu/goulc
 go 1.24.0
 
 require (
+	go.uber.org/goleak v1.3.0
 	golang.org/x/time v0.11.0
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12

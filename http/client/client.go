@@ -185,17 +185,39 @@ func New(
 		baseURL.Scheme = "https"
 	}
 
+	// Built once and shared with children and request snapshots so the
+	// transport connection pool is actually reused across requests.
+	// As a consequence, DisableTLSVerify is captured here and cannot be
+	// changed after New.
+	httpClient := &http.Client{Timeout: opt.Timeout}
+	if opt.DisableTLSVerify {
+		logger.Debug("TLS verification disabled",
+			"warning", "insecure connection",
+			"host", baseURL.Hostname(),
+			"proto", "http/1.1")
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				ServerName:         baseURL.Hostname(),
+				NextProtos:         []string{"http/1.1"},
+			},
+			// A zero value transport never evicts idle connections
+			IdleConnTimeout: 90 * time.Second,
+		}
+	}
+
 	clientCtx, cancel := context.WithCancel(ctx)
 
 	return Client{
-		logger:  logger,
-		context: clientCtx,
-		cancel:  cancel,
-		Options: *opt,
-		Header:  make(http.Header),
-		Auth:    authenticator,
-		URL:     baseURL,
-		Query:   query,
+		logger:     logger,
+		context:    clientCtx,
+		cancel:     cancel,
+		httpClient: httpClient,
+		Options:    *opt,
+		Header:     make(http.Header),
+		Auth:       authenticator,
+		URL:        baseURL,
+		Query:      query,
 	}, nil
 }
 
@@ -252,14 +274,30 @@ func (c *Client) Clone() *Client {
 	return clone
 }
 
+// snapshot returns a private copy of the client state so an in-flight
+// request is isolated from concurrent mutations. Unlike Clone, the copy
+// is not registered in the parent closer list: a per-request registration
+// would be retained for the whole parent lifetime.
+func (c *Client) snapshot() *Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.closed {
+		return nil
+	}
+
+	return c.copyLocked()
+}
+
 // copyLocked builds the actual copy. The caller must hold c.mu.
 func (c *Client) copyLocked() *Client {
 	clone := &Client{
-		logger:  c.logger,  // keep original pointer
-		Options: c.Options, // shallow copy, RateLimiter is shared
-		Header:  c.Header.Clone(),
-		URL:     c.URL,
-		Query:   maps.Clone(c.Query),
+		logger:     c.logger,     // keep original pointer
+		httpClient: c.httpClient, // share the pooled transport
+		Options:    c.Options,    // shallow copy, RateLimiter is shared
+		Header:     c.Header.Clone(),
+		URL:        c.URL,
+		Query:      maps.Clone(c.Query),
 	}
 
 	clone.context, clone.cancel = context.WithCancel(c.context)
@@ -408,25 +446,34 @@ func (c *Client) Close() error {
 		"active_requests", c.activeRequests.Load())
 
 	// Wait for active requests to complete (with timeout)
-	ctx, cancel := context.WithTimeout(context.Background(), timeOut)
-	defer cancel()
+	if c.activeRequests.Load() > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), timeOut)
+		defer cancel()
 
-	done := make(chan struct{})
-	go func() {
-		for c.activeRequests.Load() > 0 {
-			time.Sleep(LoopRateDuration)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+
+			for c.activeRequests.Load() > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(LoopRateDuration):
+				}
+			}
+		}()
+
+		// Wait for either completion or timeout
+		select {
+		case <-done:
+			c.logger.Debug("http client closed successfully")
+		case <-ctx.Done():
+			// Own the poller lifetime, it must not outlive Close
+			<-done
+			c.logger.Warn("http client close timed out with active requests",
+				"active_requests", c.activeRequests.Load(),
+				"ctx_err", ctx.Err())
 		}
-		close(done)
-	}()
-
-	// Wait for either completion or timeout
-	select {
-	case <-done:
-		c.logger.Debug("http client closed successfully")
-	case <-ctx.Done():
-		c.logger.Warn("http client close timed out with active requests",
-			"active_requests", c.activeRequests.Load(),
-			"ctx_err", ctx.Err())
 	}
 
 	// Clean up resources
@@ -435,6 +482,15 @@ func (c *Client) Close() error {
 
 	if c.cancel != nil {
 		c.cancel()
+	}
+
+	// Drop pooled connections of the client-owned transport so idle
+	// sockets and their goroutines do not outlive the client
+	if c.httpClient != nil {
+		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+		c.httpClient = nil
 	}
 
 	c.Options = Options{}
@@ -471,12 +527,8 @@ func (main *Client) DoWithMarshal(
 		return nil, ErrClientClosed
 	}
 
-	// Create a copy of the client to avoid modifying the original
-	// and potential race conditions
-	c := main.Clone() // Clone are thread-safe
-
 	if body == nil {
-		return c.Do(method, nil, resp)
+		return main.doRequest(method, "", nil, resp)
 	}
 
 	bodyData, err := body.Marshal()
@@ -484,13 +536,11 @@ func (main *Client) DoWithMarshal(
 		return nil, err
 	}
 
-	c.logger.Debug("http client marshalling body",
+	main.logger.Debug("http client marshalling body",
 		"marshaller", body.Name(),
 		"content_type", body.ContentType())
 
-	c.Header.Set("Content-Type", body.ContentType())
-
-	return c.Do(method, bodyData, resp)
+	return main.doRequest(method, body.ContentType(), bodyData, resp)
 }
 
 // Do performs an HTTP request with the specified method and body. It manages
@@ -517,18 +567,29 @@ func (main *Client) DoWithMarshal(
 func (main *Client) Do(
 	method string, body []byte, respUml Unmarshaler,
 ) (*Response, error) {
+	return main.doRequest(method, "", body, respUml)
+}
+
+// doRequest performs the request on a private snapshot of the client so
+// concurrent configuration changes cannot race with an in-flight call.
+// A non-empty contentType takes precedence over the client-level header.
+func (main *Client) doRequest(
+	method, contentType string, body []byte, respUml Unmarshaler,
+) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
 		return nil, ErrClientClosed
 	}
 
-	// Create a copy of the client to avoid modifying the original
-	// and potential race conditions
-	c := main.Clone() // Clone are thread-safe
-	defer func() {
-		c.Close()
-		c = nil
-	}() // Release resources when done
+	// Work on a snapshot so the caller's client stays untouched
+	c := main.snapshot()
+	if c == nil {
+		return nil, ErrClientClosed
+	}
+
+	// Releasing the snapshot context is enough, a full Close would
+	// spawn a wait cycle per request for no benefit
+	defer c.cancel()
 
 	// Increment main active requests counter
 	main.activeRequests.Add(1)
@@ -565,6 +626,10 @@ func (main *Client) Do(
 	// Using maps.Copy ensures a proper deep copy of the headers
 	maps.Copy(req.Header, c.Header)
 
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
 	if body != nil && req.Header.Get("Content-Type") == "" {
 		c.logger.Debug("setting the default content type",
 			"content_type", "application/json",
@@ -593,26 +658,11 @@ func (main *Client) Do(
 	// Initialize redirects tracking
 	redirectsVia := make([]Redirects, 0, 1)
 
-	// Create HTTP client with configured timeout and redirect
-	client := &http.Client{
-		Timeout:       c.Options.Timeout,
-		CheckRedirect: c.FollowRedirects(&redirectsVia),
-	}
-
-	// Configure TLS if needed
-	if c.Options.DisableTLSVerify {
-		c.logger.Debug("TLS verification disabled",
-			"warning", "insecure connection",
-			"host", c.URL.Hostname(),
-			"proto", "http/1.1")
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         c.URL.Hostname(),
-				NextProtos:         []string{"http/1.1"},
-			},
-		}
-	}
+	// Shallow copy of the shared http.Client: the pooled transport is
+	// reused while redirect tracking stays request-scoped
+	httpClient := *c.httpClient
+	httpClient.Timeout = c.Options.Timeout
+	httpClient.CheckRedirect = c.FollowRedirects(&redirectsVia)
 
 	c.logger.Debug("executing HTTP request",
 		"method", req.Method,
@@ -628,7 +678,7 @@ func (main *Client) Do(
 		}
 	}
 
-	httpRes, err := client.Do(req)
+	httpRes, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

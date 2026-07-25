@@ -99,6 +99,10 @@ type Client struct {
 	context context.Context
 	cancel  context.CancelFunc
 
+	// httpClient is built once by New and shared with children and
+	// request snapshots so the transport connection pool is reused
+	httpClient *http.Client
+
 	// Options contains the client's configuration settings
 	Options Options
 
