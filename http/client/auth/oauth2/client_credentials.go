@@ -25,31 +25,29 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	net_http "net/http"
-
-	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
 
 var (
-	// ErrorUnexpectedStatusCode is returned when the authorization server
+	// ErrUnexpectedStatusCode is returned when the authorization server
 	// returns a non-200 status code.
-	ErrorUnexpectedStatusCode = errors.New(
-		"The authorization server as returned an unexpected status code")
-	// ErrorEmptyBody is returned when the authorization server returns an
-	// empty body doesn't contain the expected token.
-	ErrorEmptyBody = errors.New(
-		"The authorization server as returned an empty body")
-	// ErrorNoToken is returned when the authorization server returns a
-	// response without a token.
-	ErrorBodyUnmarshaler = errors.New(
-		"The authorization server as returned a response without a token")
+	ErrUnexpectedStatusCode = errors.New(
+		"the authorization server returned an unexpected status code")
+	// ErrEmptyBody is returned when the authorization server returns an
+	// empty body instead of the expected token response.
+	ErrEmptyBody = errors.New(
+		"the authorization server returned an empty body")
+	// ErrNoToken is returned when the authorization server returns a
+	// response without an access token.
+	ErrNoToken = errors.New(
+		"the authorization server returned a response without a token")
 )
 
 // ClientCredentialsType defines where client credentials are sent,
@@ -102,11 +100,11 @@ type ClientCredentials struct {
 // the specified authentication type, configuration, and logger.
 func NewClientCredentials(
 	clientAuth ClientCredentialsType, config Config, log *slog.Logger,
-	http *client.Client,
+	httpClient *client.Client,
 ) (*ClientCredentials, error) {
 	cc := &ClientCredentials{
 		log:  log,
-		http: http,
+		http: httpClient,
 
 		Config:     config,
 		ClientAuth: clientAuth,
@@ -116,15 +114,15 @@ func NewClientCredentials(
 		cc.log = slog.Default()
 	}
 
-	if http == nil {
-		http, err := client.New(
+	if httpClient == nil {
+		c, err := client.New(
 			context.Background(), config.Endpoint.URL, nil,
 			&client.OptDefault, cc.log.WithGroup("oauth2"))
 		if err != nil {
 			return nil, err
 		}
 
-		cc.http = &http
+		cc.http = &c
 	}
 
 	return cc, nil
@@ -160,7 +158,7 @@ func (g *ClientCredentials) Update() error {
 func (g *ClientCredentials) Header(_ string, _ *url.URL, _ []byte,
 ) (headerKey, headerValue string, err error) {
 	g.mu.Lock()
-	token := hided.Value[string](g.Token.Token)
+	token := g.Token.Token.Reveal()
 	g.mu.Unlock()
 
 	return ClientCredentialsHeaderName,
@@ -214,33 +212,33 @@ func (g *ClientCredentials) newToken() error {
 	// Add auth to body if requested
 	if g.ClientAuth == ClientInBody {
 		data.Set("client_id", g.Config.ClientID)
-		data.Set("client_secret", hided.Value[string](g.Config.ClientSecret))
+		data.Set("client_secret", g.Config.ClientSecret.Reveal())
 	}
 
 	// RFC 6749 §4.4.1: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.1
 	c.Header.Set("Authorization", "Basic "+auth.BasicUserPass(
-		g.Config.ClientID, hided.Value[string](g.Config.ClientSecret)))
+		g.Config.ClientID, g.Config.ClientSecret.Reveal()))
 	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
 	c.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Due to body presence we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
-	res, err := c.Do(net_http.MethodPost, []byte(data.Encode()), &tokenResp)
+	res, err := c.Do(http.MethodPost, []byte(data.Encode()), &tokenResp)
 	if err != nil {
 		return err
 	}
 
 	// RFC 6749 §4.4.3: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3
-	if res.StatusCode != net_http.StatusOK {
+	if res.StatusCode != http.StatusOK {
 		g.log.Debug("Unexpected server response",
 			"code", res.Status,
 			"body", res.Body)
-		return ErrorUnexpectedStatusCode
+		return ErrUnexpectedStatusCode
 	}
 
 	// Check the body size
 	if len(res.Body) == 0 {
-		return ErrorEmptyBody
+		return ErrEmptyBody
 	}
 
 	// Check if the body contains the expected token
@@ -248,7 +246,7 @@ func (g *ClientCredentials) newToken() error {
 		g.log.Debug("No token found in the response",
 			"unmarshaler", tokenResp,
 			"raw", string(res.Body))
-		return ErrorBodyUnmarshaler
+		return ErrNoToken
 	}
 
 	// Feed the token !
