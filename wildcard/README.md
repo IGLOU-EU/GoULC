@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc/wildcard.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc/wildcard)
 
-A simple and fast wildcard pattern matching for Go. Regex is much more complex and slower (even when prepared), and `filepath.Match` is file-name-centric. This package is a very fast and very simple alternative to regex, not tied to filename semantics, with no dependencies and allocation-free for the byte path. 🥳
+A simple and fast wildcard pattern matching for Go. Regex is much more complex and slower (even when prepared), and `filepath.Match` is file-name-centric. This package is a very fast and very simple alternative to regex, not tied to filename semantics, with no dependencies and allocation-free for the byte path in the common case (see [Semantics](#-semantics) for the single exception). 🥳
 
 ## 🎯 Features
 
@@ -13,7 +13,7 @@ A simple and fast wildcard pattern matching for Go. Regex is much more complex a
   - Any other character must match itself
 
 - **🛠️ API Variants:**
-  - `Match(pattern, s string) bool`: fastest, compares byte by byte, no allocation.
+  - `Match(pattern, s string) bool`: fastest, compares byte by byte, no allocation in the common case.
   - `MatchFromByte(pattern, s []byte) bool`: same byte-wise semantics for `[]byte` inputs, skips the string conversion.
   - `MatchByRune(pattern, s string) bool`: compares rune by rune. Slower and the `[]rune` conversion allocates, but operators apply to whole Unicode code points.
 
