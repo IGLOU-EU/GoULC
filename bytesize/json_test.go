@@ -3,6 +3,7 @@ package bytesize_test
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/bytesize"
@@ -36,9 +37,22 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 			wExact: -44040192,
 		},
 		{
+			name:   "scientific notation number",
+			input:  `1E5`,
+			want:   100000,
+			wExact: 100000,
+		},
+		{
 			name:  "too big number value",
 			input: `1e300`,
 			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			// 1e400 overflows float64 itself, ParseFloat rejects it with
+			// ErrRange, exactly as it would for the "1e400" string form.
+			name:  "number out of float64 range",
+			input: `1e400`,
+			wErr:  strconv.ErrRange,
 		},
 
 		// String cases
@@ -99,15 +113,43 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 	}
 }
 
-func TestByteSize_UnmarshalJSON_InvalidNumber(t *testing.T) {
-	// 1e400 is valid JSON syntax but does not fit a float64, so the
-	// decoding inside UnmarshalJSON must surface the json error.
-	var got bytesize.Size
-	err := json.Unmarshal([]byte(`1e400`), &got)
+func TestByteSize_UnmarshalJSON_MalformedJSON(t *testing.T) {
+	// Malformed JSON never reaches the value switch, the decoder must
+	// surface the syntax error straight away.
+	var s bytesize.Size
+	if err := s.UnmarshalJSON([]byte(`{`)); err == nil {
+		t.Error("expected a decode error for malformed JSON, got nil")
+	}
+}
 
-	var typeErr *json.UnmarshalTypeError
-	if !errors.As(err, &typeErr) {
-		t.Errorf("Error is not a json.UnmarshalTypeError = %v", err)
+func TestByteSize_UnmarshalJSON_NumberStringParity(t *testing.T) {
+	// A JSON number and the same literal quoted as a JSON string must decode
+	// to a byte-identical Size: the number branch shares the string branch's
+	// Parse path, so the fraction and the canonical form never diverge.
+	literals := []string{"1.9", "44480593.92", "-44040192", "1E5", "100"}
+
+	for _, lit := range literals {
+		t.Run(lit, func(t *testing.T) {
+			var fromNumber, fromString bytesize.Size
+
+			if err := json.Unmarshal([]byte(lit), &fromNumber); err != nil {
+				t.Fatalf("number unmarshal error = %v", err)
+			}
+
+			if err := json.Unmarshal([]byte(`"`+lit+`"`), &fromString); err != nil {
+				t.Fatalf("string unmarshal error = %v", err)
+			}
+
+			if fromNumber != fromString {
+				t.Errorf(
+					"number/string mismatch for %q: bytes %d/%d exact %v/%v repr %q/%q",
+					lit,
+					fromNumber.Bytes(), fromString.Bytes(),
+					fromNumber.Exact(), fromString.Exact(),
+					fromNumber.String(), fromString.String(),
+				)
+			}
+		})
 	}
 }
 

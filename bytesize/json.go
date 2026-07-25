@@ -22,6 +22,7 @@
 package bytesize
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 )
@@ -39,32 +40,36 @@ var ErrJSONInvalidType = errors.New(
 	"invalid JSON byte size type, it should be a string or a number")
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
+// A JSON number and a JSON string go through the exact same Parse path, so
+// 1.9 and "1.9" yield the same Size and out-of-range values are rejected
+// identically. Decoding numbers as json.Number (instead of the default
+// float64) keeps the literal untouched, a float64 would drop the fraction
+// and silently wrap on overflow.
 func (d *Size) UnmarshalJSON(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+
 	var i any
-	if err := json.Unmarshal(b, &i); err != nil {
+	if err := dec.Decode(&i); err != nil {
 		return err
 	}
 
+	var raw string
 	switch value := i.(type) {
-	// Accordingly with https://pkg.go.dev/encoding/json#Unmarshal
-	// JSON numbers are always considered as an interface value of float64.
-	case float64:
-		// Check the int64 range and keep the fractional part, so the
-		// number branch behaves exactly like the string branch.
-		if err := integerOverflow(value); err != nil {
-			return err
-		}
-
-		*d = Size{t: int64(value), f: value, r: ToString(value)}
+	case json.Number:
+		raw = value.String()
 	case string:
-		var err error
-		*d, err = New(value)
-		if err != nil {
-			return err
-		}
+		raw = value
 	default:
 		return ErrJSONInvalidType
 	}
+
+	size, err := New(raw)
+	if err != nil {
+		return err
+	}
+
+	*d = size
 
 	return nil
 }
