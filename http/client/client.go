@@ -37,19 +37,13 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 	"gitlab.com/iglou.eu/goulc/http/path"
 )
 
-const (
-	percent = 100
-
-	LoopRateDuration = 100 * time.Millisecond
-)
+const LoopRateDuration = 100 * time.Millisecond
 
 var (
 	// ErrEmptyServerURL is returned when the server URL is empty
@@ -132,8 +126,6 @@ func New(
 	ctx context.Context, serverURL string, authenticator auth.Authenticator,
 	opt *Options, logger *slog.Logger,
 ) (Client, error) {
-	var err error
-
 	// Empty url are not allowed
 	if serverURL == "" {
 		return Client{}, ErrEmptyServerURL
@@ -148,7 +140,7 @@ func New(
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
 		return Client{}, errors.Join(ErrInvalidURL,
-			errors.New("failed to parse URL "+serverURL), err)
+			errors.New("parse URL "+serverURL), err)
 	}
 
 	// Set default logger and context
@@ -179,34 +171,32 @@ func New(
 		opt = &OptDefault
 	}
 
-	// Initialize the new client
-	main := Client{
-		Mu:      &sync.RWMutex{},
+	query, err := url.ParseQuery(parsedURL.RawQuery)
+	if err != nil {
+		return Client{}, errors.Join(ErrInvalidQuery,
+			errors.New("parse query "+parsedURL.RawQuery), err)
+	}
+
+	baseURL := *parsedURL
+	baseURL.Path = path.Format(baseURL.Path)
+
+	if opt.OnlyHTTPS && baseURL.Scheme == "http" {
+		logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
+		baseURL.Scheme = "https"
+	}
+
+	clientCtx, cancel := context.WithCancel(ctx)
+
+	return Client{
 		logger:  logger,
+		context: clientCtx,
+		cancel:  cancel,
 		Options: *opt,
 		Header:  make(http.Header),
-		Query:   make(url.Values),
-	}
-
-	main.URL = *parsedURL
-	main.URL.Path = path.Format(main.URL.Path)
-	main.context, main.cancel = context.WithCancel(ctx)
-
-	if authenticator != nil {
-		main.Auth = authenticator
-	}
-
-	if main.Query, err = url.ParseQuery(main.URL.RawQuery); err != nil {
-		return Client{}, errors.Join(ErrInvalidQuery,
-			errors.New("failed to parse query "+main.URL.RawQuery), err)
-	}
-
-	if main.Options.OnlyHTTPS && parsedURL.Scheme == "http" {
-		main.logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
-		parsedURL.Scheme = "https"
-	}
-
-	return main, nil
+		Auth:    authenticator,
+		URL:     baseURL,
+		Query:   query,
+	}, nil
 }
 
 // NewChild creates a new Client that inherits the parent's configuration
@@ -242,40 +232,34 @@ func (c *Client) NewChild(childPath string) *Client {
 }
 
 // Clone creates and returns a new Client that is a copy of the original.
-// The cloned Client shares the same logger and RateLimiter as the original but
-// has its own mutex, context, headers, parameters, and error history.
-// If the original Client is closed, the cloned Client is also marked as
-// closed. The new Client’s context is derived from the original’s context,
-// and authentication is cloned if it exists.
+// The cloned Client shares the same logger and RateLimiter as the original
+// but has its own mutex, context, headers and parameters. If the original
+// Client is closed, Clone returns nil. The new Client’s context is derived
+// from the original’s context, and authentication is cloned if it exists.
 func (c *Client) Clone() *Client {
-	c.Mu.RLock()
+	// Registration happens under the same lock as the copy so a
+	// concurrent Close cannot slip between them and miss the new child
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.closed {
-		c.Mu.RUnlock()
 		return nil
 	}
 
-	clone := &Client{
-		closed:         c.closed,
-		activeRequests: 0,
-		logger:         c.logger, // keep original pointer
-		closer:         []func() error{},
+	clone := c.copyLocked()
+	c.closer = append(c.closer, clone.Close)
 
-		Mu: &sync.RWMutex{},
-		Options: Options{
-			OnlyHTTPS:        c.Options.OnlyHTTPS,
-			Follow:           c.Options.Follow,
-			FollowAuth:       c.Options.FollowAuth,
-			FollowReferer:    c.Options.FollowReferer,
-			MaxRedirect:      c.Options.MaxRedirect,
-			Timeout:          c.Options.Timeout,
-			DisableTLSVerify: c.Options.DisableTLSVerify,
-			RateLimiter:      c.Options.RateLimiter, // keep original pointer
-		},
-		Header:       c.Header.Clone(),
-		URL:          c.URL,
-		Query:        maps.Clone(c.Query),
-		ErrorHistory: []ErrorHistory{},
+	return clone
+}
+
+// copyLocked builds the actual copy. The caller must hold c.mu.
+func (c *Client) copyLocked() *Client {
+	clone := &Client{
+		logger:  c.logger,  // keep original pointer
+		Options: c.Options, // shallow copy, RateLimiter is shared
+		Header:  c.Header.Clone(),
+		URL:     c.URL,
+		Query:   maps.Clone(c.Query),
 	}
 
 	clone.context, clone.cancel = context.WithCancel(c.context)
@@ -288,14 +272,6 @@ func (c *Client) Clone() *Client {
 	if c.Auth != nil {
 		clone.Auth = c.Auth.Clone()
 	}
-
-	c.Mu.RUnlock()
-
-	// Add the new client to the closer list of the parent
-	// This ensure that the child client is closed when the parent is closed
-	c.Mu.Lock()
-	c.closer = append(c.closer, clone.Close)
-	c.Mu.Unlock()
 
 	return clone
 }
@@ -312,9 +288,9 @@ func (c *Client) FlushHeader() *Client {
 	c.logger.Debug("flushing headers", "current_headers",
 		slices.Sorted(maps.Keys(c.Header)))
 
-	c.Mu.Lock()
+	c.mu.Lock()
 	c.Header = http.Header{}
-	c.Mu.Unlock()
+	c.mu.Unlock()
 
 	return c
 }
@@ -330,51 +306,11 @@ func (c *Client) FlushHeader() *Client {
 func (c *Client) FlushQuery() *Client {
 	c.logger.Debug("flushing query parameters", "current_query", c.Query)
 
-	c.Mu.Lock()
+	c.mu.Lock()
 	c.Query = url.Values{}
-	c.Mu.Unlock()
+	c.mu.Unlock()
 
 	return c
-}
-
-// calculateErrorRate determines the error rate for the specified status code,
-// removing entries older than one minute to ensure accuracy.
-func (c *Client) calculateErrorRate(statusCode int) float64 {
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
-
-	// Clean old entries (older than 1 minute)
-	now := time.Now()
-	minTime := now.Add(-time.Minute)
-	var newHistory []ErrorHistory
-	for _, entry := range c.ErrorHistory {
-		if entry.Timestamp.After(minTime) {
-			newHistory = append(newHistory, entry)
-		}
-	}
-
-	// Add current request
-	newHistory = append(newHistory, ErrorHistory{
-		URL:        c.URL.String(),
-		StatusCode: statusCode,
-		Timestamp:  now,
-		IsError:    statusCode >= http.StatusBadRequest,
-	})
-	c.ErrorHistory = newHistory
-
-	// Calculate error rate
-	if len(newHistory) == 0 {
-		return 0
-	}
-
-	var errorCount int
-	for _, entry := range newHistory {
-		if entry.IsError {
-			errorCount++
-		}
-	}
-
-	return float64(errorCount) / float64(len(newHistory)) * percent
 }
 
 // FollowRedirects returns a RedirectFunc that follows HTTP redirects according
@@ -448,27 +384,28 @@ func (c *Client) FollowRedirects(
 // It marks the Client as closed to prevent new requests, logs the closure
 // process, and waits for active requests to complete within the configured
 // timeout. If active requests do not finish before the timeout, a warning is
-// logged. After calling Close, the Client cannot be reused.
+// logged. Child clients are closed in cascade and their errors are joined
+// into the returned error. After calling Close, the Client cannot be reused.
 func (c *Client) Close() error {
 	// Lock temporarily to avoid hanging active requests
-	c.Mu.Lock()
+	c.mu.Lock()
 	if c.closed {
 		// In case the context was not closed
 		if c.cancel != nil {
 			c.cancel()
 		}
 
-		c.Mu.Unlock()
+		c.mu.Unlock()
 		return nil
 	}
 	c.closed = true
 	timeOut := c.Options.Timeout
-	c.Mu.Unlock()
+	c.mu.Unlock()
 
 	// Log closing
 	c.logger.Debug("closing http client",
 		"url", c.URL.String(),
-		"active_requests", atomic.LoadInt32(&c.activeRequests))
+		"active_requests", c.activeRequests.Load())
 
 	// Wait for active requests to complete (with timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeOut)
@@ -476,7 +413,7 @@ func (c *Client) Close() error {
 
 	done := make(chan struct{})
 	go func() {
-		for atomic.LoadInt32(&c.activeRequests) > 0 {
+		for c.activeRequests.Load() > 0 {
 			time.Sleep(LoopRateDuration)
 		}
 		close(done)
@@ -488,13 +425,13 @@ func (c *Client) Close() error {
 		c.logger.Debug("http client closed successfully")
 	case <-ctx.Done():
 		c.logger.Warn("http client close timed out with active requests",
-			"active_requests", atomic.LoadInt32(&c.activeRequests),
+			"active_requests", c.activeRequests.Load(),
 			"ctx_err", ctx.Err())
 	}
 
 	// Clean up resources
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.cancel != nil {
 		c.cancel()
@@ -505,29 +442,23 @@ func (c *Client) Close() error {
 	c.Auth = nil
 	c.URL = url.URL{}
 	c.Query = nil
-	c.ErrorHistory = nil
 
-	// Close all child clients
-	wg := sync.WaitGroup{}
-	for _, closer := range c.closer {
-		wg.Add(1)
-		go func(closer func() error) {
-			defer wg.Done()
-			if closer == nil {
-				return
-			}
+	// Close all child clients, keeping their errors visible to the caller
+	var errs []error
+	for _, closeChild := range c.closer {
+		if closeChild == nil {
+			continue
+		}
 
-			if err := closer(); err != nil {
-				c.logger.Error("error closing child client", "error", err)
-			}
-		}(closer)
+		if err := closeChild(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	wg.Wait()
 
 	c.closer = nil
 	c.logger = nil
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // DoWithMarshal is a convenience function that performs a client.Do() call but
@@ -600,8 +531,8 @@ func (main *Client) Do(
 	}() // Release resources when done
 
 	// Increment main active requests counter
-	atomic.AddInt32(&main.activeRequests, 1)
-	defer atomic.AddInt32(&main.activeRequests, -1)
+	main.activeRequests.Add(1)
+	defer main.activeRequests.Add(-1)
 
 	// Validate input parameters
 	if method == "" {
@@ -711,10 +642,8 @@ func (main *Client) Do(
 		Proto:        httpRes.Proto,
 		Header:       httpRes.Header.Clone(),
 		Request:      httpRes.Request,
-		raw:          httpRes,
 		ResponseTime: time.Since(start),
 		Trace:        redirectsVia,
-		ErrorRate:    c.calculateErrorRate(httpRes.StatusCode),
 	}
 
 	c.logger.Debug("HTTP request",
@@ -723,8 +652,7 @@ func (main *Client) Do(
 		"path", req.URL.Path,
 		"status", resp.Status,
 		"trace", resp.Trace,
-		"response_time", resp.ResponseTime,
-		"error_rate", resp.ErrorRate)
+		"response_time", resp.ResponseTime)
 
 	if httpRes.ContentLength == 0 {
 		c.logger.Debug("empty response body received")
@@ -763,10 +691,10 @@ func (main *Client) Do(
 // Call Close() if the context is closed but not the client,
 // or if the client is closed but not the context.
 func (c *Client) IsClosed() bool {
-	c.Mu.RLock()
+	c.mu.RLock()
 
 	if c.context.Err() != nil {
-		c.Mu.RUnlock()
+		c.mu.RUnlock()
 
 		if !c.closed {
 			c.Close() // Ctx closed but Client open
@@ -776,12 +704,12 @@ func (c *Client) IsClosed() bool {
 	}
 
 	if c.closed {
-		c.Mu.RUnlock()
+		c.mu.RUnlock()
 
 		c.Close() // Client closed but ctx open
 		return true
 	}
 
-	c.Mu.RUnlock()
+	c.mu.RUnlock()
 	return false
 }
