@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"gitlab.com/iglou.eu/goulc/ascii"
+	"gitlab.com/iglou.eu/goulc/hided"
 )
 
 // DigestAlgo represents the supported hash algorithms for HTTP
@@ -72,15 +73,17 @@ const (
 )
 
 // Verify Digest implements Authenticator interface
-var _ Authenticator = &Digest{}
+var _ Authenticator = (*Digest)(nil)
 
 // Digest implements the HTTP Digest Authentication scheme as defined in
-// RFC7616. It provides both standard authentication and session-based variants.
+// RFC7616. It provides both standard authentication and session-based
+// variants. The password is held as a hided.String so fmt verbs and
+// marshaling cannot leak it.
 type Digest struct {
 	// Username for authentication
 	Username string
-	// Password for authentication
-	Password string
+	// Password for authentication, in hidden mode
+	Password hided.String
 
 	// Parameters contains all the digest authentication parameters
 	Parameters DigestParameters
@@ -124,42 +127,49 @@ type digestValue struct {
 	asterisk bool   // If the key should have a * suffix (UTF-8 encoding)
 }
 
-// marshal converts the digest values into a properly formatted string
-// for use in an HTTP header.
-func (d *digestValues) marshal() string {
-	// Pre-allocate the slice to avoid reallocations
-	entries := make([]string, 0, len(*d))
+// marshal renders the values as a complete Digest Authorization header
+// value. A single pre-sized buffer keeps it to one allocation per header
+// instead of one per entry.
+func (d digestValues) marshal() string {
+	// Worst case per entry: '*', '=', two quotes and the ", " separator
+	const entryOverhead = 6
 
-	// Process each digest value
-	for _, v := range *d {
+	var sb strings.Builder
+
+	size := len(DigestValuePrefix)
+	for _, v := range d {
+		size += len(v.key) + len(v.value) + entryOverhead
+	}
+	sb.Grow(size)
+
+	sb.WriteString(DigestValuePrefix)
+	first := true
+	for _, v := range d {
 		// Skip empty values as per RFC
 		if v.value == "" {
 			continue
 		}
 
-		// Pre-calculate the entry size
-		var entry strings.Builder
-		entry.Grow(len(v.key) + len(v.value) + 4) // +3 for '=', '*' and quotes
+		if !first {
+			sb.WriteString(", ")
+		}
+		first = false
 
-		// Build the entry string
-		entry.WriteString(v.key)
+		sb.WriteString(v.key)
 		if v.asterisk {
-			entry.WriteRune('*')
+			sb.WriteByte('*')
 		}
-		entry.WriteRune('=')
+		sb.WriteByte('=')
 		if v.quoted {
-			entry.WriteRune('"')
+			sb.WriteByte('"')
 		}
-		entry.WriteString(v.value)
+		sb.WriteString(v.value)
 		if v.quoted {
-			entry.WriteRune('"')
+			sb.WriteByte('"')
 		}
-
-		entries = append(entries, entry.String())
 	}
 
-	// Join all entries with comma and space
-	return strings.Join(entries, ", ")
+	return sb.String()
 }
 
 // NewDigest creates a new Digest authentication instance with
@@ -173,20 +183,25 @@ func (d *digestValues) marshal() string {
 // - Nonce must not be empty
 // - URI must not be empty
 //
+// The per-request parameters tied to QOP (CNonce, NC) are validated later,
+// by Header, so they can be set or refreshed after construction.
+//
 // Returns an error if any of the required fields are invalid or missing.
 func NewDigest(
-	username, password string, parameters DigestParameters,
+	username string, password hided.String, parameters DigestParameters,
 ) (Digest, error) {
 	if username == "" {
 		return Digest{}, ErrNoUserID
 	}
 
-	if password == "" {
+	if password.IsEmpty() {
 		return Digest{}, ErrNoPassword
 	}
 
-	if parameters.Hash([]byte("")) == ErrUnknownAlgorithm.Error() {
-		return Digest{}, ErrUnknownAlgorithm
+	// Probe the algorithm once so an unsupported value fails at
+	// construction instead of surfacing on the first request
+	if _, err := parameters.Hash(nil); err != nil {
+		return Digest{}, err
 	}
 
 	if parameters.Realm == "" {
@@ -202,19 +217,9 @@ func NewDigest(
 	}
 
 	return Digest{
-		Username: username,
-		Password: password,
-		Parameters: DigestParameters{
-			Algorithm: parameters.Algorithm,
-			Realm:     parameters.Realm,
-			URI:       parameters.URI,
-			QOP:       parameters.QOP,
-			Nonce:     parameters.Nonce,
-			CNonce:    parameters.CNonce,
-			NC:        parameters.NC,
-			UserHash:  parameters.UserHash,
-			Opaque:    parameters.Opaque,
-		},
+		Username:   username,
+		Password:   password,
+		Parameters: parameters,
 	}, nil
 }
 
@@ -234,18 +239,42 @@ func (_ *Digest) Update() error {
 // with RFC2069.
 //
 // The method constructs the header by:
-// 1. Computing the response using A1 and A2 values
-// 2. Building the header with all required fields
-// 3. Handling username encoding
+// 1. Validating the QOP related parameters
+// 2. Computing the username entry and the response value
+// 3. Building the header with all required fields
+//
+// It returns an error if the algorithm is not supported, if the QOP value
+// is not supported, or if QOP is set without CNonce or NC, which RFC7616
+// section 3.4 makes mandatory alongside qop.
 func (d *Digest) Header(method string, _ *url.URL, body []byte,
 ) (headerKey, headerValue string, err error) {
-	a1 := d.A1()
-	a2 := d.A2(method, body)
-	response := d.Parameters.Hash([]byte(d.Response(a1, a2)))
+	if err = d.Parameters.validate(); err != nil {
+		return "", "", err
+	}
+
+	username, err := d.usernameValue()
+	if err != nil {
+		return "", "", err
+	}
+
+	a1, err := d.A1()
+	if err != nil {
+		return "", "", err
+	}
+
+	a2, err := d.A2(method, body)
+	if err != nil {
+		return "", "", err
+	}
+
+	response, err := d.Response(a1, a2)
+	if err != nil {
+		return "", "", err
+	}
 
 	// Formating the Authorization Header Field Defined under RFC7616-3.4
 	// at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4
-	digestValues := digestValues{
+	values := digestValues{
 		{
 			key:    "uri",
 			value:  d.Parameters.URI,
@@ -292,36 +321,41 @@ func (d *Digest) Header(method string, _ *url.URL, body []byte,
 			key:   "userhash",
 			value: strconv.FormatBool(d.Parameters.UserHash),
 		},
+		username,
 	}
 
-	// User hash or UTF-8 username declaration header
-	// Defined under RFC7616-3.4.4
-	// at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.4
-	// And under RFC7616-4
-	// at https://datatracker.ietf.org/doc/html/rfc7616#section-4
+	return DigestHeaderName, values.marshal(), nil
+}
+
+// usernameValue renders the username entry of the Authorization header,
+// hashed, plain, or extended notation, as defined under RFC7616-3.4.4
+// at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.4
+// and under RFC7616-4
+// at https://datatracker.ietf.org/doc/html/rfc7616#section-4
+func (d *Digest) usernameValue() (digestValue, error) {
 	switch {
 	case d.Parameters.UserHash:
-		digestValues = append(digestValues, digestValue{
-			key: "username",
-			value: d.Parameters.Hash(
-				[]byte(d.Username + `:` + d.Parameters.Realm)),
-			quoted: true,
-		})
-	case ascii.IsPrintable(d.Username):
-		digestValues = append(digestValues, digestValue{
-			key:    "username",
-			value:  d.Username,
-			quoted: true,
-		})
-	default:
-		digestValues = append(digestValues, digestValue{
-			key:      "username",
-			value:    "UTF-8''" + url.QueryEscape(d.Username),
-			asterisk: true,
-		})
-	}
+		hash, err := d.Parameters.Hash(
+			[]byte(d.Username + DigestSeparator + d.Parameters.Realm))
+		if err != nil {
+			return digestValue{}, err
+		}
 
-	return DigestHeaderName, DigestValuePrefix + digestValues.marshal(), nil
+		return digestValue{key: "username", value: hash, quoted: true}, nil
+	case ascii.IsPrintable(d.Username):
+		return digestValue{
+			key: "username", value: d.Username, quoted: true,
+		}, nil
+	default:
+		// RFC5987 percent-encodes a space as "%20" while QueryEscape
+		// emits "+", swap it so the value decodes to the original name
+		value := "UTF-8''" + strings.ReplaceAll(
+			url.QueryEscape(d.Username), "+", "%20")
+
+		return digestValue{
+			key: "username", value: value, asterisk: true,
+		}, nil
+	}
 }
 
 // Clone creates a deep copy of the instance.
@@ -337,42 +371,51 @@ func (d *Digest) Clone() Authenticator {
 // A1 computes the A1 value as specified in RFC7616 section 3.4.2.
 // at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.2
 // For session-based algorithms (-sess suffix), it includes the nonce
-// and cnonce values. Returns the computed A1 value used as secret Keyed.
-func (d *Digest) A1() string {
+// and cnonce values. Returns the computed A1 value used as secret Keyed,
+// or an error if the algorithm is not supported.
+func (d *Digest) A1() (string, error) {
 	a1 := strings.Join([]string{
 		d.Username,
 		d.Parameters.Realm,
-		d.Password,
+		d.Password.Reveal(),
 	}, DigestSeparator)
 
-	if strings.HasSuffix(string(d.Parameters.Algorithm), "-sess") {
-		return strings.Join([]string{
-			d.Parameters.Hash([]byte(a1)),
-			d.Parameters.Nonce,
-			d.Parameters.CNonce,
-		}, DigestSeparator)
+	if !strings.HasSuffix(string(d.Parameters.Algorithm), "-sess") {
+		return a1, nil
 	}
 
-	return a1
+	hash, err := d.Parameters.Hash([]byte(a1))
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Join([]string{
+		hash,
+		d.Parameters.Nonce,
+		d.Parameters.CNonce,
+	}, DigestSeparator), nil
 }
 
 // A2 computes the A2 value as specified in RFC7616 section 3.4.3.
 // at https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3
 // When using auth-int quality of protection, it includes a hash of
-// the request body. Returns the computed A2 value used in response generation.
-func (d *Digest) A2(method string, body []byte) string {
-	if d.Parameters.QOP == DigestQOPAuthInt {
-		return strings.Join([]string{
-			method,
-			d.Parameters.URI,
-			d.Parameters.Hash(body),
-		}, DigestSeparator)
+// the request body. Returns the computed A2 value used in response
+// generation, or an error if the algorithm is not supported.
+func (d *Digest) A2(method string, body []byte) (string, error) {
+	if d.Parameters.QOP != DigestQOPAuthInt {
+		return method + DigestSeparator + d.Parameters.URI, nil
+	}
+
+	hash, err := d.Parameters.Hash(body)
+	if err != nil {
+		return "", err
 	}
 
 	return strings.Join([]string{
 		method,
 		d.Parameters.URI,
-	}, DigestSeparator)
+		hash,
+	}, DigestSeparator), nil
 }
 
 // Response generates the digest response according to RFC7616 section 3.4.1
@@ -380,25 +423,59 @@ func (d *Digest) A2(method string, body []byte) string {
 // It supports both standard authentication and quality of protection modes.
 // Note: Support the deprecated RFC2069 section 2.1.2 backwards compatibility
 // at https://datatracker.ietf.org/doc/html/rfc2069#section-2.1.2
-// Returns the response string used in the Authorization header.
-func (d *Digest) Response(a1, a2 string) string {
+// Returns the hexadecimal response value used in the Authorization header,
+// or an error if the algorithm is not supported.
+func (d *Digest) Response(a1, a2 string) (string, error) {
+	ha1, err := d.Parameters.Hash([]byte(a1))
+	if err != nil {
+		return "", err
+	}
+
+	// The ha1 hash just proved the algorithm is supported, so hashing
+	// with the same algorithm cannot fail anymore
+	ha2, _ := d.Parameters.Hash([]byte(a2))
+
 	if d.Parameters.QOP == DigestQOPAuth ||
 		d.Parameters.QOP == DigestQOPAuthInt {
-		return strings.Join([]string{
-			d.Parameters.Hash([]byte(a1)), // The secret Keyed Digest
+		return d.Parameters.Hash([]byte(strings.Join([]string{
+			ha1, // The secret Keyed Digest
 			d.Parameters.Nonce,
 			d.Parameters.NC,
 			d.Parameters.CNonce,
 			d.Parameters.QOP,
-			d.Parameters.Hash([]byte(a2)),
-		}, DigestSeparator)
+			ha2,
+		}, DigestSeparator)))
 	}
 
-	return strings.Join([]string{
-		d.Parameters.Hash([]byte(a1)), // The secret Keyed Digest
+	return d.Parameters.Hash([]byte(strings.Join([]string{
+		ha1, // The secret Keyed Digest
 		d.Parameters.Nonce,
-		d.Parameters.Hash([]byte(a2)),
-	}, DigestSeparator)
+		ha2,
+	}, DigestSeparator)))
+}
+
+// validate enforces the RFC7616 section 3.4 requirement that a client
+// nonce and a nonce count accompany any request protected by QOP, and
+// that the QOP value is one the response computation supports.
+func (d *DigestParameters) validate() error {
+	switch d.QOP {
+	case "":
+		// No QOP means the deprecated RFC2069 compatibility mode,
+		// which uses neither CNonce nor NC
+		return nil
+	case DigestQOPAuth, DigestQOPAuthInt:
+		if d.CNonce == "" {
+			return ErrNoCNonce
+		}
+
+		if d.NC == "" {
+			return ErrNoNC
+		}
+
+		return nil
+	default:
+		return ErrUnknownQOP
+	}
 }
 
 // Hash computes the digest hash value using the specified algorithm.
@@ -408,24 +485,23 @@ func (d *Digest) Response(a1, a2 string) string {
 // - SHA-512-256 (RFC7616)
 // - SHA-512 (future-proof extension)
 //
-// Returns the hexadecimal string representation of the hash.
-// If the algorithm is not supported, it returns
-// the ErrUnknownAlgorithm error message.
-func (d *DigestParameters) Hash(s []byte) string {
+// Returns the hexadecimal string representation of the hash, or
+// ErrUnknownAlgorithm if the algorithm is not supported.
+func (d *DigestParameters) Hash(s []byte) (string, error) {
 	switch d.Algorithm {
 	case DigestSHA256, DigestSHA256SESS:
 		sum := sha256.Sum256(s)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	case DigestSHA512256, DigestSHA512256SESS:
 		sum := sha512.Sum512_256(s)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	case DigestSHA512, DigestSHA512SESS:
 		sum := sha512.Sum512(s)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	case DigestMD5, DigestMD5SESS:
 		sum := md5.Sum(s)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
+	default:
+		return "", ErrUnknownAlgorithm
 	}
-
-	return ErrUnknownAlgorithm.Error()
 }
