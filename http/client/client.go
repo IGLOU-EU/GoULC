@@ -121,7 +121,9 @@ var OptDefault = Options{
 // that inherit its configuration.
 //
 // The `serverURL` parameter must include the scheme and path.
-// The `authenticator` parameter can be nil if no authentication is required.
+// The `authenticator` parameter can be nil if no authentication is
+// required. It is shared between all in-flight requests, so it must be
+// safe for concurrent use.
 // The `opt` parameter allows customization of client behavior through
 // the `Options` struct. The `logger` parameter specifies a custom logger;
 // if nil, the default logger is used.
@@ -349,6 +351,13 @@ func (c *Client) Clone() *Client {
 	}
 
 	clone := c.copyLocked()
+
+	// A long-lived clone gets its own authenticator so both lineages
+	// evolve independently, unlike per-request snapshots
+	if c.Auth != nil {
+		clone.Auth = c.Auth.Clone()
+	}
+
 	c.closer = append(c.closer, clone.Close)
 
 	return clone
@@ -357,7 +366,9 @@ func (c *Client) Clone() *Client {
 // snapshot returns a private copy of the client state so an in-flight
 // request is isolated from concurrent mutations. Unlike Clone, the copy
 // is not registered in the parent closer list: a per-request registration
-// would be retained for the whole parent lifetime.
+// would be retained for the whole parent lifetime. The authenticator is
+// shared, not cloned: it owns cross-request state such as token caches,
+// which a throwaway copy would silently discard.
 func (c *Client) snapshot() *Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -369,13 +380,16 @@ func (c *Client) snapshot() *Client {
 	return c.copyLocked()
 }
 
-// copyLocked builds the actual copy. The caller must hold c.mu.
+// copyLocked builds the actual copy. The caller must hold c.mu. The
+// authenticator is shared per the Authenticator concurrency contract,
+// Clone overrides it for long-lived children.
 func (c *Client) copyLocked() *Client {
 	clone := &Client{
 		logger:     c.logger,     // keep original pointer
 		httpClient: c.httpClient, // share the pooled transport
 		Options:    c.Options,    // shallow copy, RateLimiter is shared
 		Header:     c.Header.Clone(),
+		Auth:       c.Auth,
 		URL:        c.URL,
 		Query:      maps.Clone(c.Query),
 	}
@@ -385,10 +399,6 @@ func (c *Client) copyLocked() *Client {
 	if c.URL.User != nil {
 		user := *c.URL.User
 		clone.URL.User = &user
-	}
-
-	if c.Auth != nil {
-		clone.Auth = c.Auth.Clone()
 	}
 
 	return clone

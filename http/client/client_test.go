@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,6 +75,52 @@ type mockResponse struct {
 func (_ *mockResponse) Name() string { return "mockResponse" }
 func (m *mockResponse) Unmarshal(_ int, _ http.Header, body []byte) error {
 	return json.Unmarshal(body, m)
+}
+
+// countingAuthenticator mimics a token-caching authenticator such as the
+// oauth2 one: Update only fetches when the instance holds no token yet,
+// and Clone returns a fresh instance with an independent cache.
+type countingAuthenticator struct {
+	updates atomic.Int32
+	fetches atomic.Int32
+
+	mu    sync.Mutex
+	token string
+}
+
+func (_ *countingAuthenticator) Name() string { return "counting" }
+
+func (a *countingAuthenticator) Update() error {
+	a.updates.Add(1)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.token == "" {
+		a.fetches.Add(1)
+		a.token = "cached-token"
+	}
+
+	return nil
+}
+
+func (a *countingAuthenticator) Header(_ string, _ *url.URL, _ []byte,
+) (headerKey, headerValue string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.token == "" {
+		return "", "", errors.New("no token cached")
+	}
+
+	return "Authorization", "Bearer " + a.token, nil
+}
+
+func (a *countingAuthenticator) Clone() auth.Authenticator {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return &countingAuthenticator{token: a.token}
 }
 
 // otherResponse implements client.Unmarshaler with another concrete type
@@ -718,6 +765,57 @@ func TestClient_Do_Closed(t *testing.T) {
 	}
 	if !errors.Is(err, client.ErrClientClosed) {
 		t.Errorf("Do() error = %v, want %v", err, client.ErrClientClosed)
+	}
+}
+
+// TestClient_Do_SharesAuthenticator pins the authenticator ownership:
+// requests must run Update on the instance the caller handed to New, so
+// state built by one request (a cached token) serves the next ones. A
+// per-request copy would rebuild that state on every single call.
+func TestClient_Do_SharesAuthenticator(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+	defer ts.Close()
+
+	opt := client.OptDefault
+	opt.DisableTLSVerify = true
+
+	counting := &countingAuthenticator{}
+	c, err := client.New(context.Background(), ts.URL, counting, &opt, nil)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+
+	const requests = 3
+	for range requests {
+		resp, err := c.Do(http.MethodGet, nil, nil)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Do() status = %v, want %v",
+				resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	if got := counting.updates.Load(); got != requests {
+		t.Errorf("Update() calls on the caller instance = %d, want %d",
+			got, requests)
+	}
+	if got := counting.fetches.Load(); got != 1 {
+		t.Errorf("token fetches = %d, want 1 "+
+			"(cached state must survive between requests)", got)
 	}
 }
 
