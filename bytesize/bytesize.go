@@ -179,10 +179,12 @@ func Parse(s string) (
 
 	// Find the position of the first uppercase letter to split the size
 	// and the symbol (if any). Every IEC symbol starts with an uppercase
-	// ASCII letter, including the bare "B" byte unit.
+	// ASCII letter, including the bare "B" byte unit. 'E' is skipped: it
+	// marks the exponent of scientific notation ("1E5") and never starts a
+	// supported unit, so it must not be mistaken for a symbol.
 	runePos := -1
 	for i := range s {
-		if s[i] < 'A' || s[i] > 'Z' {
+		if s[i] < 'A' || s[i] > 'Z' || s[i] == 'E' {
 			continue
 		}
 
