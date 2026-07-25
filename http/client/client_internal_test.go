@@ -60,6 +60,51 @@ func TestClose_StopsWaitPoller(t *testing.T) {
 	}
 }
 
+// TestClose_NoTimeoutWaitsForDrain proves the timeout path handles the
+// disabled timeout: a NoTimeout client normalizes to an internal 0, and
+// Close must then wait for active requests to drain instead of expiring
+// immediately through a zero deadline.
+func TestClose_NoTimeoutWaitsForDrain(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	opt := OptDefault
+	opt.Timeout = NoTimeout
+
+	c, err := New(context.Background(), "https://vault.example",
+		nil, &opt, discardLogger())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// The sentinel maps to the internal disabled timeout
+	if c.Options.Timeout != 0 {
+		t.Fatalf("normalized timeout = %v, want 0", c.Options.Timeout)
+	}
+
+	c.activeRequests.Store(1)
+
+	done := make(chan error, 1)
+	go func() { done <- c.Close() }()
+
+	// With no deadline Close must still be blocked on the drain
+	select {
+	case <-done:
+		t.Fatal("Close() returned before active requests drained")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	c.activeRequests.Store(0)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() did not return after the requests drained")
+	}
+}
+
 // TestRegisterChild_ClosedParent pins the no-orphan guarantee: a child
 // built before the parent closed must not be published afterward, and
 // its context must be released.

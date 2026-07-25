@@ -42,7 +42,12 @@ type Redirects struct {
 	Timestamp  time.Time
 }
 
-// Options configures the behavior of the HTTP client.
+// Options configures the behavior of the HTTP client. It is secure by
+// design: the zero value is a safe configuration. HTTPS is enforced, TLS
+// certificates are verified, authorization and referer headers are not
+// forwarded on redirects, no redirect is followed, and the hardened
+// DefaultTimeout and DefaultMaxBodySize are applied. Each protection has
+// an explicit opt-out, so relaxing security is always a deliberate act.
 type Options struct {
 	// DisableHTTPS allows plain HTTP requests. By default (false) the
 	// client enforces HTTPS, rejecting or upgrading http URLs, so the
@@ -73,8 +78,9 @@ type Options struct {
 	// Default: 2
 	MaxRedirect int `json:",omitzero"`
 
-	// Timeout sets the maximum duration for the entire request.
-	// Default: 35s
+	// Timeout sets the maximum duration for the entire request. Zero
+	// applies DefaultTimeout. Use NoTimeout to disable it.
+	// Default: DefaultTimeout (35s)
 	Timeout time.Duration `json:",omitzero"`
 
 	// DisableTLSVerify skips TLS certificate validation when true.
@@ -86,8 +92,9 @@ type Options struct {
 	// MaxBodySize caps how many response body bytes are read into
 	// memory, guarding against malicious or broken servers. Requests
 	// whose response body exceeds the limit fail with ErrBodyTooLarge.
-	// Zero means no limit, which is only safe with trusted servers.
-	// Default: 32 MiB
+	// Zero applies DefaultMaxBodySize. Use NoBodyLimit for an explicit
+	// unlimited read (only safe with trusted servers).
+	// Default: DefaultMaxBodySize (32 MiB)
 	MaxBodySize int64 `json:",omitzero"`
 
 	// RateLimiter allows for rate limiting by implementing the Wait method.
