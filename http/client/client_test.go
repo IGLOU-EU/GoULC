@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,13 @@ import (
 // TestMain fails the package when any test leaks a goroutine.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
+}
+
+// debugLogger exercises the debug-gated code paths without polluting
+// the test output.
+func debugLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard,
+		&slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
 // mockAuthenticator implements auth.Authenticator for testing
@@ -211,7 +219,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestClient_NewChild(t *testing.T) {
-	parent, err := client.New(context.Background(), "https://vault13.wasteland", nil, nil, nil)
+	parent, err := client.New(context.Background(), "https://vault13.wasteland", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create parent client: %v", err)
 	}
@@ -273,7 +281,7 @@ func TestClient_NewChild(t *testing.T) {
 func TestClient_NewChildSegments(t *testing.T) {
 	const base = "https://vault13.wasteland/api"
 
-	parent, err := client.New(context.Background(), base, nil, nil, nil)
+	parent, err := client.New(context.Background(), base, nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create parent client: %v", err)
 	}
@@ -398,7 +406,7 @@ func TestClient_Do(t *testing.T) {
 	opt := client.OptDefault
 	opt.DisableTLSVerify = true
 	opt.Timeout = 1 * time.Second
-	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -605,7 +613,7 @@ func TestClient_Do_ReusesConnections(t *testing.T) {
 	opt := client.OptDefault
 	opt.DisableTLSVerify = true
 
-	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -738,7 +746,7 @@ func TestClient_Close(t *testing.T) {
 }
 
 func TestClient_FlushHeader(t *testing.T) {
-	c, err := client.New(context.Background(), "https://example.com", nil, nil, nil)
+	c, err := client.New(context.Background(), "https://example.com", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -752,7 +760,7 @@ func TestClient_FlushHeader(t *testing.T) {
 }
 
 func TestClient_FlushQuery(t *testing.T) {
-	c, err := client.New(context.Background(), "https://example.com", nil, nil, nil)
+	c, err := client.New(context.Background(), "https://example.com", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -858,7 +866,7 @@ func TestClient_DoWithMarshal(t *testing.T) {
 	// Create client
 	opt := client.OptDefault
 	opt.DisableTLSVerify = true
-	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -920,7 +928,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 		testToken   = "NCR-Ranger-Token"
 	)
 
-	c, err := client.New(context.Background(), baseURL, nil, nil, nil)
+	c, err := client.New(context.Background(), baseURL, nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
