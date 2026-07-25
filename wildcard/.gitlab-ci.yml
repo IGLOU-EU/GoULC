@@ -1,0 +1,55 @@
+# Per-package CI for the wildcard subpkg.
+# Included from the root .gitlab-ci.yml.
+#
+# The benchmark job cd's into wildcard/ before running anything, because
+# tools/benchmark.sh uses paths relative to the package directory.
+#
+# Required CI/CD variable (Settings > CI/CD > Variables, "masked" + "protected"):
+#   GOULC_BOT_TOKEN — project access token with `write_repository` scope, used
+#   to push the refreshed benchmark assets back to the default branch. Bot
+#   commits include "[skip ci]" to avoid pipeline loops.
+#
+# The `wildcard:benchmark` stage is declared in the root .gitlab-ci.yml so the
+# pipeline order stays explicit there.
+
+# Image carrying everything benchmark.sh needs:
+#   - go (test -bench)
+#   - bash, awk, coreutils (benchmark.sh)
+#   - gnuplot + DejaVu font (benchmark.sh plot generation)
+#   - git (push back via bot)
+.wildcard:base:
+  image: golang:1.24-bookworm
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends git gnuplot fonts-dejavu-core
+    - git config --global user.email "ci-bot@iglou.eu"
+    - git config --global user.name  "GoULC CI Bot"
+    - git remote set-url origin "https://oauth2:${GOULC_BOT_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git fetch origin "$CI_COMMIT_BRANCH"
+    - git checkout "$CI_COMMIT_BRANCH"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Run the benchmark, refresh the table + graphs in README, commit if anything
+# changed. Always runs on the default branch so the README reflects the latest
+# numbers after every merge.
+wildcard:benchmark:
+  extends: .wildcard:base
+  stage: wildcard:benchmark
+  script:
+    - cd wildcard
+    - bash tools/benchmark.sh
+    - cd ..
+    - |
+      if ! git diff --quiet -- wildcard/README.md wildcard/assets/; then
+        git add wildcard/README.md wildcard/assets/
+        git commit -m "🤖 chore(wildcard): refresh benchmark table and graphs [skip ci]"
+        git push origin "HEAD:${CI_COMMIT_BRANCH}"
+      else
+        echo "Benchmark output unchanged."
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - wildcard/wildcard.go
+        - wildcard/wildcard_match.go
