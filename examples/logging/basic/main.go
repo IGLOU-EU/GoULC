@@ -6,13 +6,12 @@ import (
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/logging"
-	"gitlab.com/iglou.eu/goulc/logging/model"
 )
 
 func main() {
 	// Create configuration
 	// TimeFormat can be custom at creation time
-	cfg := &model.Config{
+	cfg := &logging.Config{
 		Level:      "DEBUG",
 		Colored:    true,
 		TimeFormat: "[20060102:150405]",
