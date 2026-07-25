@@ -127,7 +127,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #05: And we have now a BFG, let's ROCK !\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
+	fmt.Printf("\nTest #05: And we have now a BFG, let's ROCK !\nStatus: %v; Body: %#v\n", doomResp.Status, doomResp)
 
 	// #06 into the response, you can see some metrics
 	// Let's try a bad endpoint after a redirect
