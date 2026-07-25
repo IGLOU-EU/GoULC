@@ -74,7 +74,7 @@ See the [logging package documentation](logging/README.md).
 
 ### 🃏 Wildcard
 
-A simple and fast wildcard pattern matching package, supporting `*`, `?`, and `.` operators. It's a lightweight alternative to regex (not tied to filename semantics like `filepath.Match`), with no dependencies and an allocation-free byte path.
+A simple and fast wildcard pattern matching package, supporting `*`, `?`, and `.` operators. It's a lightweight alternative to regex (not tied to filename semantics like `filepath.Match`), with no dependencies and an allocation-free byte path, except for one allocation when a pattern longer than 63 bytes contains `?`.
 
 See the [wildcard package documentation](wildcard/README.md).
 
