@@ -17,20 +17,25 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
 
 - **🛠️ Client Features:**
   - Thread-safe operations
+  - Secure-by-design options: the zero value of `Options` is a safe
+    configuration (HTTPS enforced, TLS verified, no auth/referer
+    forwarding, no redirect, hardened `DefaultTimeout` and
+    `DefaultMaxBodySize`), each protection has an explicit opt-out
   - Parent-child client hierarchy
   - Safe child paths from literal segments (`NewChildSegments`)
   - Configurable redirects
   - Custom header management
   - Query parameter handling
   - Rate limiting support
-  - Response body size limiting (32 MiB with the default options)
+  - Response body size limiting (32 MiB by default, `NoBodyLimit` to
+    disable)
   - Response timing
   - Context cancellation
 
 - **🔄 Request Handling:**
   - Automatic body marshaling/unmarshaling
   - Typed access to unmarshaled responses (`Result[T]`)
-  - Customizable timeout settings
+  - Customizable timeout settings (35s by default, `NoTimeout` to disable)
   - TLS configuration
   - Context support
   - Redirect chain tracking

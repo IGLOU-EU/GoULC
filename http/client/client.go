@@ -47,6 +47,24 @@ import (
 // for active requests to complete before releasing the client resources.
 const LoopRateDuration = 100 * time.Millisecond
 
+const (
+	// DefaultTimeout is the request timeout applied when Options.Timeout
+	// is left at its zero value.
+	DefaultTimeout time.Duration = 35 * time.Second
+
+	// NoTimeout disables the request timeout when set on Options.Timeout,
+	// the explicit opt-out of the hardened default.
+	NoTimeout time.Duration = -1
+
+	// DefaultMaxBodySize is the response body cap applied when
+	// Options.MaxBodySize is left at its zero value.
+	DefaultMaxBodySize int64 = 32 << 20
+
+	// NoBodyLimit disables the response body size cap when set on
+	// Options.MaxBodySize, only safe with trusted servers.
+	NoBodyLimit int64 = -1
+)
+
 var (
 	// ErrEmptyServerURL is returned when the server URL is empty
 	ErrEmptyServerURL = errors.New("server URL cannot be empty")
@@ -113,9 +131,9 @@ var OptDefault = Options{
 	FollowAuth:       false,
 	FollowReferer:    true,
 	MaxRedirect:      2,
-	Timeout:          35 * time.Second,
+	Timeout:          DefaultTimeout,
 	DisableTLSVerify: false,
-	MaxBodySize:      32 << 20,
+	MaxBodySize:      DefaultMaxBodySize,
 }
 
 // New creates and initializes a new Client with the specified configuration.
@@ -172,12 +190,13 @@ func New(
 		ctx = context.Background()
 	}
 
-	// Validate input parameters
+	// Validate input parameters. Negative values are rejected except the
+	// dedicated opt-out sentinels NoTimeout and NoBodyLimit
 	if opt != nil {
 		// Validate timeout
-		if opt.Timeout < 0 {
+		if opt.Timeout < 0 && opt.Timeout != NoTimeout {
 			return Client{}, errors.Join(ErrInvalidTimeout,
-				errors.New("timeout must be >= 0, got "+
+				errors.New("timeout must be >= 0 or NoTimeout, got "+
 					strconv.Itoa(int(opt.Timeout.Seconds()))))
 		}
 
@@ -189,14 +208,21 @@ func New(
 		}
 
 		// Validate response body size limit
-		if opt.MaxBodySize < 0 {
+		if opt.MaxBodySize < 0 && opt.MaxBodySize != NoBodyLimit {
 			return Client{}, errors.Join(ErrInvalidBodyLimit,
-				errors.New("body size limit must be >= 0, got "+
+				errors.New("body size limit must be >= 0 or NoBodyLimit, got "+
 					strconv.FormatInt(opt.MaxBodySize, 10)))
 		}
 	} else {
 		opt = &OptDefault
 	}
+
+	// Normalize a private copy so a zero value applies the hardened
+	// default and the opt-out sentinels map to the internal disabled
+	// value (0). The caller Options is never mutated.
+	options := *opt
+	options.Timeout = normalizeTimeout(options.Timeout)
+	options.MaxBodySize = normalizeBodySize(options.MaxBodySize)
 
 	query, err := url.ParseQuery(parsedURL.RawQuery)
 	if err != nil {
@@ -207,7 +233,7 @@ func New(
 	baseURL := *parsedURL
 	baseURL.Path = path.Format(baseURL.Path)
 
-	if !opt.DisableHTTPS && baseURL.Scheme == "http" {
+	if !options.DisableHTTPS && baseURL.Scheme == "http" {
 		logger.Debug("Scheme updated to HTTPS by default HTTPS enforcement")
 		baseURL.Scheme = "https"
 	}
@@ -216,8 +242,8 @@ func New(
 	// transport connection pool is actually reused across requests.
 	// As a consequence, DisableTLSVerify is captured here and cannot be
 	// changed after New.
-	httpClient := &http.Client{Timeout: opt.Timeout}
-	if opt.DisableTLSVerify {
+	httpClient := &http.Client{Timeout: options.Timeout}
+	if options.DisableTLSVerify {
 		logger.Debug("TLS verification disabled",
 			"warning", "insecure connection",
 			"host", baseURL.Hostname(),
@@ -240,12 +266,40 @@ func New(
 		context:    clientCtx,
 		cancel:     cancel,
 		httpClient: httpClient,
-		Options:    *opt,
+		Options:    options,
 		Header:     make(http.Header),
 		Auth:       authenticator,
 		URL:        baseURL,
 		Query:      query,
 	}, nil
+}
+
+// normalizeTimeout maps the public timeout semantics to the internal
+// value used by http.Client and Close, where 0 means no timeout: a zero
+// input applies DefaultTimeout, the NoTimeout sentinel becomes 0.
+func normalizeTimeout(t time.Duration) time.Duration {
+	switch t {
+	case 0:
+		return DefaultTimeout
+	case NoTimeout:
+		return 0
+	default:
+		return t
+	}
+}
+
+// normalizeBodySize maps the public body limit semantics to the internal
+// value, where 0 means unlimited: a zero input applies DefaultMaxBodySize,
+// the NoBodyLimit sentinel becomes 0.
+func normalizeBodySize(size int64) int64 {
+	switch size {
+	case 0:
+		return DefaultMaxBodySize
+	case NoBodyLimit:
+		return 0
+	default:
+		return size
+	}
 }
 
 // NewChild creates a new Client that inherits the parent's configuration
@@ -588,8 +642,14 @@ func (c *Client) Close() error {
 
 	// Wait for active requests to complete (with timeout)
 	if c.activeRequests.Load() > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), timeOut)
-		defer cancel()
+		// A zero internal timeout means no deadline, so wait until the
+		// requests drain rather than expiring immediately
+		ctx := context.Background()
+		if timeOut > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeOut)
+			defer cancel()
+		}
 
 		done := make(chan struct{})
 		go func() {

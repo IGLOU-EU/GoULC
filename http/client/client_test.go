@@ -292,13 +292,38 @@ func TestNew(t *testing.T) {
 			expectedError: client.ErrInvalidRedirectLimit,
 		},
 		{
-			name:      "invalid body size limit",
+			name:      "invalid body size limit below sentinel",
 			serverURL: "https://candlekeep.faerun",
 			opt: &client.Options{
-				MaxBodySize: -1,
+				MaxBodySize: -2,
 			},
 			wantErr:       true,
 			expectedError: client.ErrInvalidBodyLimit,
+		},
+		{
+			name:      "invalid timeout below sentinel",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				Timeout: -2,
+			},
+			wantErr:       true,
+			expectedError: client.ErrInvalidTimeout,
+		},
+		{
+			name:      "no timeout sentinel is accepted",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				Timeout: client.NoTimeout,
+			},
+			wantErr: false,
+		},
+		{
+			name:      "no body limit sentinel is accepted",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				MaxBodySize: client.NoBodyLimit,
+			},
+			wantErr: false,
 		},
 	}
 
@@ -878,8 +903,12 @@ func TestClient_Do_BodyLimit(t *testing.T) {
 		wantErrIs error // nil expects a successful read
 	}{
 		{
-			name:      "zero limit reads everything",
+			name:      "zero applies the default limit",
 			giveLimit: 0,
+		},
+		{
+			name:      "explicit no body limit",
+			giveLimit: client.NoBodyLimit,
 		},
 		{
 			name:      "limit above body size",
@@ -931,6 +960,71 @@ func TestClient_Do_BodyLimit(t *testing.T) {
 					len(resp.Body), bodySize)
 			}
 		})
+	}
+}
+
+func TestNew_Normalization(t *testing.T) {
+	tests := []struct {
+		name          string
+		give          *client.Options
+		wantTimeout   time.Duration
+		wantBodyLimit int64
+	}{
+		{
+			name:          "nil options uses hardened defaults",
+			give:          nil,
+			wantTimeout:   client.DefaultTimeout,
+			wantBodyLimit: client.DefaultMaxBodySize,
+		},
+		{
+			name:          "zero value applies defaults",
+			give:          &client.Options{},
+			wantTimeout:   client.DefaultTimeout,
+			wantBodyLimit: client.DefaultMaxBodySize,
+		},
+		{
+			name: "sentinels disable the limits",
+			give: &client.Options{
+				Timeout:     client.NoTimeout,
+				MaxBodySize: client.NoBodyLimit,
+			},
+			wantTimeout:   0,
+			wantBodyLimit: 0,
+		},
+		{
+			name: "positive values pass through",
+			give: &client.Options{
+				Timeout:     12 * time.Second,
+				MaxBodySize: 4096,
+			},
+			wantTimeout:   12 * time.Second,
+			wantBodyLimit: 4096,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := client.New(context.Background(),
+				"https://candlekeep.faerun", nil, tt.give, nil)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			defer func() { _ = c.Close() }()
+
+			if c.Options.Timeout != tt.wantTimeout {
+				t.Errorf("Options.Timeout = %v, want %v",
+					c.Options.Timeout, tt.wantTimeout)
+			}
+			if c.Options.MaxBodySize != tt.wantBodyLimit {
+				t.Errorf("Options.MaxBodySize = %d, want %d",
+					c.Options.MaxBodySize, tt.wantBodyLimit)
+			}
+		})
+	}
+
+	// The hardened defaults must not leak back into OptDefault
+	if client.OptDefault.Timeout != client.DefaultTimeout {
+		t.Errorf("OptDefault.Timeout mutated to %v", client.OptDefault.Timeout)
 	}
 }
 
