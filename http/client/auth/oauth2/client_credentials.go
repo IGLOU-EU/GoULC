@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/iglou.eu/goulc/contract"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
@@ -93,7 +94,7 @@ type ClientCredentials struct {
 	mu sync.Mutex
 
 	// now returns the current time, injectable so tests can pin expiry
-	now func() time.Time
+	now contract.TimeNow
 
 	Config     Config
 	ClientAuth ClientCredentialsType
