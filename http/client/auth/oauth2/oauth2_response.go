@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/iglou.eu/goulc/duration"
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 )
@@ -42,15 +41,21 @@ var _ client.Unmarshaler = &Response{}
 // TokenResponse represents successful access token response
 // RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
 type TokenResponse struct {
-	Token        hided.String      `json:"access_token"`
-	TokenType    string            `json:"token_type"`
-	ExpiresIn    duration.Duration `json:"expires_in"`
-	RefreshToken hided.String      `json:"refresh_token"`
-	Scope        string            `json:"scope"`
+	Token     hided.String `json:"access_token"`
+	TokenType string       `json:"token_type"`
 
-	// Store the issued date
-	// RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
-	ExpireAt time.Time
+	// ExpiresIn is the token lifetime in seconds, as defined by
+	// RFC 6749 §5.1. When the server omits it, the token is treated
+	// as already expired and refreshed on every request.
+	ExpiresIn int64 `json:"expires_in"`
+
+	RefreshToken hided.String `json:"refresh_token"`
+	Scope        string       `json:"scope"`
+
+	// ExpireAt is the absolute expiry instant, computed locally from
+	// ExpiresIn when the token is issued. It is not part of the wire
+	// response.
+	ExpireAt time.Time `json:"-"`
 }
 
 // ErrorResponse represents error response

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"testing"
 
-	"gitlab.com/iglou.eu/goulc/duration"
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client/auth/oauth2"
 )
@@ -36,7 +35,7 @@ func TestResponse_Unmarshal(t *testing.T) {
 				TokenResponse: oauth2.TokenResponse{
 					Token:        hided.NewString("secret-token"),
 					TokenType:    "Bearer",
-					ExpiresIn:    duration.Duration{Duration: 3600},
+					ExpiresIn:    3600,
 					RefreshToken: hided.NewString("refresh-secret"),
 					Scope:        "read write",
 				},
