@@ -95,6 +95,41 @@ func Test_Parse(t *testing.T) {
 			wString: "42MiB",
 		},
 		{
+			name:    "float gibi value",
+			input:   "1.5GiB",
+			wInt:    1536 * bytesize.Mebi,
+			wFloat:  float64(1536 * bytesize.Mebi),
+			wString: "1.5GiB",
+		},
+		{
+			name:    "negative short kibi value",
+			input:   "-5KiB",
+			wInt:    -5 * bytesize.Kibi,
+			wFloat:  float64(-5 * bytesize.Kibi),
+			wString: "-5KiB",
+		},
+		{
+			name:    "scientific notation uppercase",
+			input:   "1E5",
+			wInt:    100000,
+			wFloat:  100000,
+			wString: "97.66KiB",
+		},
+		{
+			name:    "scientific notation lowercase",
+			input:   "1e5",
+			wInt:    100000,
+			wFloat:  100000,
+			wString: "97.66KiB",
+		},
+		{
+			name:    "scientific notation with unit",
+			input:   "1E3KiB",
+			wInt:    1000 * bytesize.Kibi,
+			wFloat:  float64(1000 * bytesize.Kibi),
+			wString: "1000KiB",
+		},
+		{
 			name:    "byte unit value",
 			input:   "1B",
 			wInt:    1,
@@ -121,6 +156,11 @@ func Test_Parse(t *testing.T) {
 			wErr:  bytesize.ErrNoValue,
 		},
 		{
+			name:  "byte symbol without value",
+			input: "B",
+			wErr:  bytesize.ErrNoValue,
+		},
+		{
 			name:  "invalid numeric value",
 			input: "a Byte",
 			wErr:  strconv.ErrSyntax,
@@ -138,6 +178,11 @@ func Test_Parse(t *testing.T) {
 		{
 			name:  "too big unitless value",
 			input: "1e20",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "too big scientific uppercase value",
+			input: "1E20",
 			wErr:  bytesize.ErrIntegerOverflow,
 		},
 		{
