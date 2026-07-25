@@ -242,7 +242,7 @@ func (g *ClientCredentials) newToken() error {
 	}
 
 	// Check if the body contains the expected token
-	if tokenResp.Token.IsEmpty() {
+	if tokenResp.TokenResponse.Token.IsEmpty() {
 		g.log.Debug("No token found in the response",
 			"unmarshaler", tokenResp,
 			"raw", string(res.Body))
