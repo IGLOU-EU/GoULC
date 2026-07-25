@@ -1,10 +1,11 @@
-// build: go run -tags=gorm main.go
+//go:build gorm
+
+// Run with: go run -tags=gorm main.go
 package main
 
 import (
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/logging"
-	"gitlab.com/iglou.eu/goulc/logging/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -19,7 +20,7 @@ type User struct {
 
 func main() {
 	// Create a new default logger
-	logger, err := logging.New("", &model.Config{
+	logger, err := logging.New("", &logging.Config{
 		Level:   "DEBUG",
 		Colored: true,
 	})
