@@ -71,7 +71,7 @@ The tested functions are:
 
 Originally, this library was a fork from the Minio project, released as [`github.com/IGLOU-EU/go-wildcard`](https://github.com/IGLOU-EU/go-wildcard) under the Apache License 2.0. The goal of the fork was to keep a usable Apache-licensed version after [MinIO migrated to GNU AGPL 3.0](https://github.com/minio/minio/commit/069432566fcfac1f1053677cc925ddafd750730a). The original MinIO wildcard matching code can still be found in [`minio/pkg/wildcard`](https://github.com/minio/pkg/tree/main/wildcard).
 
-The fork was then rewritten end-to-end and switched to the **BSD 3-Clause** license, with the byte-wise, allocation-free `Match` / `MatchFromByte` / `MatchByRune` implementation generated from a single `source/` template via `go generate`.
+The fork was then rewritten end-to-end and switched to the **BSD 3-Clause** license, with the byte-wise, allocation-free `Match` / `MatchFromByte` / `MatchByRune` implementation generated from a single template via `go generate`. The generated matchers have since been merged into a single generic implementation (plus a hand-written rune variant), and the code generator is gone.
 
 It now lives here as a subpackage of [GoULC](../README.md) and is **relicensed under LGPL-3.0-or-later** to align with the rest of the collection. The MinIO-derived implementation is preserved in [`benchmark/old_wildcard_test.go`](./benchmark/old_wildcard_test.go) under its original Apache 2.0 header for comparison only — it is not part of the public API.
 
