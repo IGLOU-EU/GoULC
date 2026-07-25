@@ -44,9 +44,11 @@ type Redirects struct {
 
 // Options configures the behavior of the HTTP client.
 type Options struct {
-	// OnlyHTTPS enforces the use of HTTPS protocol.
-	// Default: true
-	OnlyHTTPS bool `json:",omitzero"`
+	// DisableHTTPS allows plain HTTP requests. By default (false) the
+	// client enforces HTTPS, rejecting or upgrading http URLs, so the
+	// zero value is secure.
+	// Default: false
+	DisableHTTPS bool `json:",omitzero"`
 
 	// Follow enables automatic following of HTTP 3xx redirects.
 	// Default: true

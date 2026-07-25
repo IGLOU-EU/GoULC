@@ -25,14 +25,15 @@ func main() {
 	ts := Test_DoomServer()
 	defer ts.Close()
 
-	// You can use the client.OptDefault, but it provide a "safe" configuration,
-	// So we can't use it in this non-secure environment.
+	// The client enforces HTTPS by default (the zero value is secure).
+	// Our local httptest server speaks plain HTTP, so we explicitly
+	// disable that enforcement for this example.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	opt := client.Options{
-		OnlyHTTPS: false,
-		Timeout:   time.Second * 5,
+		DisableHTTPS: true,
+		Timeout:      time.Second * 5,
 	}
 
 	// Create an HTTP client without authentication

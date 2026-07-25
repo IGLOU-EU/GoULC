@@ -79,7 +79,7 @@ func TestClientCredentials_UpdateExpiryMargin(t *testing.T) {
 
 			httpClient, err := client.New(
 				context.Background(), server.URL, nil, &client.Options{
-					OnlyHTTPS:        false,
+					DisableHTTPS:     true,
 					DisableTLSVerify: true,
 					Timeout:          time.Minute,
 				}, nil)
