@@ -30,6 +30,14 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
   - Context support
   - Redirect chain tracking
 
+## 📦 Packages
+
+- `http/client`: the HTTP client itself
+- `http/client/auth`: authentication providers (Basic, Digest, OAuth2)
+- `http/path`: URL path normalization helpers, formerly `http/utils`. The
+  `Format` function (formerly `PathFormatting`) now also collapses repeated
+  slashes and resolves `.` and `..` segments.
+
 ## 📝 Examples
 
 Usage examples can be found in the [examples](../examples/http) directory.   
