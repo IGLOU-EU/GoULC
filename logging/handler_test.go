@@ -282,8 +282,8 @@ func TestHandler_WithGroup(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "[G:.mygroup]") {
-		t.Errorf("expected output to contain '[G:.mygroup]', got %q", output)
+	if !strings.Contains(output, "[G:mygroup]") {
+		t.Errorf("expected output to contain '[G:mygroup]', got %q", output)
 	}
 }
 
@@ -310,7 +310,7 @@ func TestHandler_Handle(t *testing.T) {
 			opts:  &HandlerOptions{Config: model.Config{Colored: false}},
 			level: slog.LevelInfo,
 			msg:   "hello world",
-			checkOut: func(t *testing.T, out, errOut string) {
+			checkOut: func(t *testing.T, out, _ string) {
 				// Check timestamp pattern
 				tsRe := regexp.MustCompile(`\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`)
 				if !tsRe.MatchString(out) {
@@ -358,7 +358,7 @@ func TestHandler_Handle(t *testing.T) {
 			level: slog.LevelInfo,
 			msg:   "sourced message",
 			usePC: true,
-			checkOut: func(t *testing.T, out, errOut string) {
+			checkOut: func(t *testing.T, out, _ string) {
 				// Source output should contain a file reference with colon and line number
 				srcRe := regexp.MustCompile(`\S+\.go:\d+:`)
 				if !srcRe.MatchString(out) {
@@ -371,7 +371,7 @@ func TestHandler_Handle(t *testing.T) {
 			opts:  &HandlerOptions{Config: model.Config{Colored: true}},
 			level: slog.LevelInfo,
 			msg:   "colored message",
-			checkOut: func(t *testing.T, out, errOut string) {
+			checkOut: func(t *testing.T, out, _ string) {
 				if !strings.Contains(out, "\033[") {
 					t.Errorf("expected ANSI escape codes in output, got %q", out)
 				}
@@ -382,7 +382,7 @@ func TestHandler_Handle(t *testing.T) {
 			opts:  &HandlerOptions{Config: model.Config{ForceSyslog: true}},
 			level: slog.LevelInfo,
 			msg:   "syslog message",
-			checkOut: func(t *testing.T, out, errOut string) {
+			checkOut: func(t *testing.T, out, _ string) {
 				expectedPrefix := BuildSyslogPrefix(slog.LevelInfo)
 				if expectedPrefix == "" {
 					t.Skip("syslog prefix is empty on this platform")
@@ -398,7 +398,7 @@ func TestHandler_Handle(t *testing.T) {
 			level: slog.LevelInfo,
 			msg:   "attrs message",
 			attrs: []slog.Attr{slog.String("foo", "bar")},
-			checkOut: func(t *testing.T, out, errOut string) {
+			checkOut: func(t *testing.T, out, _ string) {
 				if !strings.Contains(out, "\t- foo=bar") {
 					t.Errorf("expected indented attribute line, got %q", out)
 				}
@@ -548,25 +548,21 @@ func TestHandler_writeSyslogPrefix(t *testing.T) {
 	})
 }
 
-func TestHandler_writeAttributes(t *testing.T) {
+func TestHandler_AttributeLines(t *testing.T) {
 	t.Run("basic_attribute", func(t *testing.T) {
 		var outBuf bytes.Buffer
 		w := &model.Writer{Out: &outBuf, Err: &outBuf}
 		h := NewHandler(nil, w, &HandlerOptions{Config: model.Config{Colored: false}})
 
-		var buf bytes.Buffer
-		result := h.writeAttributes(&buf, slog.LevelInfo, "key=value")
-
-		if !result {
-			t.Error("writeAttributes should always return true")
+		r := slog.NewRecord(time.Now(), slog.LevelInfo, "msg", 0)
+		r.AddAttrs(slog.String("key", "value"))
+		if err := h.Handle(context.Background(), r); err != nil {
+			t.Fatalf("Handle() error: %v", err)
 		}
 
-		got := buf.String()
-		if !strings.HasPrefix(got, "\n") {
-			t.Errorf("expected output to start with newline, got %q", got)
-		}
-		if !strings.Contains(got, "\t- key=value") {
-			t.Errorf("expected tab-dash-space content, got %q", got)
+		got := outBuf.String()
+		if !strings.Contains(got, "\n\t- key=value") {
+			t.Errorf("expected newline-tab-dash attribute line, got %q", got)
 		}
 	})
 
@@ -575,20 +571,24 @@ func TestHandler_writeAttributes(t *testing.T) {
 		w := &model.Writer{Out: &outBuf, Err: &outBuf}
 		h := NewHandler(nil, w, &HandlerOptions{Config: model.Config{ForceSyslog: true, Colored: false}})
 
-		var buf bytes.Buffer
-		result := h.writeAttributes(&buf, slog.LevelInfo, "key=value")
-
-		if !result {
-			t.Error("writeAttributes should always return true")
+		r := slog.NewRecord(time.Now(), slog.LevelInfo, "msg", 0)
+		r.AddAttrs(slog.String("key", "value"))
+		if err := h.Handle(context.Background(), r); err != nil {
+			t.Fatalf("Handle() error: %v", err)
 		}
 
-		got := buf.String()
 		prefix := BuildSyslogPrefix(slog.LevelInfo)
-		if prefix != "" && !strings.Contains(got, prefix) {
-			t.Errorf("expected syslog prefix %q in output, got %q", prefix, got)
+		if prefix == "" {
+			t.Skip("syslog prefix is empty on this platform")
 		}
-		if !strings.Contains(got, "\t- key=value") {
-			t.Errorf("expected tab-dash-space content, got %q", got)
+
+		// Every line of a record must carry the prefix, so multi-line
+		// records stay consistent for the journal.
+		got := strings.TrimSuffix(outBuf.String(), "\n")
+		for i, line := range strings.Split(got, "\n") {
+			if !strings.HasPrefix(line, prefix) {
+				t.Errorf("line %d misses syslog prefix %q: %q", i, prefix, line)
+			}
 		}
 	})
 }
@@ -608,11 +608,11 @@ func TestHandler_WithGroupAndAttrs(t *testing.T) {
 		}
 
 		output := buf.String()
-		if !strings.Contains(output, "[G:.a.b]") {
-			t.Errorf("expected output to contain '[G:.a.b]', got %q", output)
+		if !strings.Contains(output, "[G:a.b]") {
+			t.Errorf("expected output to contain '[G:a.b]', got %q", output)
 		}
-		if !strings.Contains(output, "k=v") {
-			t.Errorf("expected output to contain 'k=v', got %q", output)
+		if !strings.Contains(output, "a.k=v") {
+			t.Errorf("expected output to contain 'a.k=v', got %q", output)
 		}
 	})
 
@@ -630,8 +630,8 @@ func TestHandler_WithGroupAndAttrs(t *testing.T) {
 		}
 
 		output := buf.String()
-		if !strings.Contains(output, "[G:.g]") {
-			t.Errorf("expected output to contain '[G:.g]', got %q", output)
+		if !strings.Contains(output, "[G:g]") {
+			t.Errorf("expected output to contain '[G:g]', got %q", output)
 		}
 		if !strings.Contains(output, "x=y") {
 			t.Errorf("expected output to contain 'x=y', got %q", output)

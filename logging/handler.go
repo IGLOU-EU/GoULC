@@ -25,7 +25,9 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
+	"time"
 
 	"gitlab.com/iglou.eu/goulc/logging/model"
 )
@@ -60,18 +62,24 @@ var bufPool = sync.Pool{
 // - Concurrent-safe logging with mutex protection
 // - Source code location with customizable base path
 type Handler struct {
-	h   slog.Handler
 	w   model.Writer
 	opt HandlerOptions
 
-	group             string
+	// groups holds the open WithGroup names, passed to ReplaceAttr and
+	// rendered both as the "[G:...]" marker and as the key prefix.
+	groups            []string
+	prefix            string
 	preformattedAttrs []string
 
 	cancel context.CancelFunc
-	mu     *sync.RWMutex
+
+	// mu is held by pointer so every handler derived through
+	// WithAttrs/WithGroup shares the same lock, serializing writes to
+	// the shared writer (same pattern as the stdlib slog handlers).
+	mu *sync.Mutex
 }
 
-var _ = slog.Handler(&Handler{})
+var _ slog.Handler = (*Handler)(nil)
 
 // HandlerOptions configures the behavior of the Handler.
 type HandlerOptions struct {
@@ -89,7 +97,7 @@ type HandlerOptions struct {
 //     (separate streams for normal and error logs).
 //   - The opt parameter configures coloring, source code info, and base path.
 //
-// If opt or sopt is nil, default options will be used.
+// If opt is nil, default options will be used.
 // The handler is concurrent-safe and implements the slog.Handler interface.
 func NewHandler(
 	cancel context.CancelFunc, w *model.Writer, opt *HandlerOptions,
@@ -108,78 +116,83 @@ func NewHandler(
 	}
 
 	return &Handler{
-		h:   slog.NewTextHandler(w.Out, &localOpt.HandlerOptions),
 		w:   *w,
 		opt: localOpt,
 
 		cancel: cancel,
-		mu:     &sync.RWMutex{},
+		mu:     &sync.Mutex{},
 	}
 }
 
 // Enabled implements slog.Handler interface and determines if a log level
-// should be processed based on the handler's configuration
-func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.h.Enabled(ctx, level)
-}
-
-// WithAttrs implements slog.Handler interface and returns a new Handler with
-// the given attributes added to the set of attributes that will be logged
-// with each log record. The attributes are stored as a slice of strings.
-func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	// Lock during copy
-	h.mu.RLock()
-
-	// Copy and initialize new handler
-	oldAttrsLen := len(h.preformattedAttrs)
-	newHandler := &Handler{
-		h:   h.h,
-		w:   h.w,
-		opt: h.opt,
-
-		group:             h.group,
-		preformattedAttrs: make([]string, oldAttrsLen, oldAttrsLen+len(attrs)),
-
-		cancel: h.cancel,
-		mu:     &sync.RWMutex{},
+// should be processed based on the handler's configured minimum level.
+// A nil level means slog.LevelInfo, as for the stdlib handlers.
+func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
+	minLevel := slog.LevelInfo
+	if h.opt.HandlerOptions.Level != nil {
+		minLevel = h.opt.HandlerOptions.Level.Level()
 	}
 
-	// Copy existing preformatted attributes
-	copy(newHandler.preformattedAttrs, h.preformattedAttrs)
+	return level >= minLevel
+}
 
-	// The copy is done, unlock
-	h.mu.RUnlock()
+// WithAttrs implements slog.Handler interface and returns a new Handler
+// that always logs the given attributes. The attributes are resolved,
+// passed through ReplaceAttr, expanded from groups, and preformatted once
+// so records only copy ready-made strings.
+func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return h
+	}
 
-	// Add new attributes
+	newHandler := h.clone()
+
+	buf := bufPool.Get().(*bytes.Buffer)
 	for _, attr := range attrs {
-		if !attr.Equal(slog.Attr{}) {
+		h.walkAttr(h.groups, h.prefix, attr, func(prefix string, a slog.Attr) {
+			buf.Reset()
+			appendKeyValue(buf, prefix, a)
 			newHandler.preformattedAttrs = append(
-				newHandler.preformattedAttrs, attr.String())
-		}
+				newHandler.preformattedAttrs, buf.String())
+		})
+	}
+	if buf.Cap() <= maxBufferSize {
+		bufPool.Put(buf)
 	}
 
 	return newHandler
 }
 
 // WithGroup returns a new handler with the given group name appended.
-// This implementation uses a simple dot-separated prefix rather than
-// nested group handling, since slog.Group covers most grouping needs.
+// The group qualifies the keys of subsequent attributes with a
+// dot-separated prefix and is echoed as a "[G:...]" marker on each line.
 func (h *Handler) WithGroup(group string) slog.Handler {
-	h.mu.RLock()
-	newHandler := &Handler{
-		h:   h.h,
+	if group == "" {
+		return h
+	}
+
+	newHandler := h.clone()
+	newHandler.groups = append(newHandler.groups, group)
+	newHandler.prefix = h.prefix + group + "."
+
+	return newHandler
+}
+
+// clone copies the handler for WithAttrs/WithGroup derivation. Slices are
+// copied so derived handlers never share append storage, while the mutex
+// pointer is deliberately shared to keep writes serialized.
+func (h *Handler) clone() *Handler {
+	return &Handler{
 		w:   h.w,
 		opt: h.opt,
 
-		group:             h.group + "." + group,
+		groups:            append([]string(nil), h.groups...),
+		prefix:            h.prefix,
 		preformattedAttrs: append([]string(nil), h.preformattedAttrs...),
 
 		cancel: h.cancel,
-		mu:     &sync.RWMutex{},
+		mu:     h.mu,
 	}
-	h.mu.RUnlock()
-
-	return newHandler
 }
 
 // Handle implements slog.Handler interface. It formats and writes a log record.
@@ -187,7 +200,7 @@ func (h *Handler) WithGroup(group string) slog.Handler {
 // - Applies ANSI colors if enabled
 // - Uses different writers for error and non-error logs
 // - Includes timestamp, level, source location (if enabled), and message
-// - Formats and writes all record attributes
+// - Resolves, rewrites (ReplaceAttr), escapes, and writes all attributes
 // - Is concurrent-safe through mutex protection
 func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	// Set colors if enabled
@@ -203,9 +216,12 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	// Add syslog prefix
 	h.writeSyslogPrefix(buf, r.Level)
 
-	// Date and time
-	buf.WriteString(r.Time.Format(h.opt.TimeFormat))
-	buf.WriteByte(' ')
+	// Date and time, skipped when zero per the slog.Handler contract
+	if !r.Time.IsZero() {
+		buf.Write(r.Time.AppendFormat(
+			buf.AvailableBuffer(), h.opt.TimeFormat))
+		buf.WriteByte(' ')
+	}
 
 	// Level
 	buf.WriteByte('[')
@@ -213,43 +229,45 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	buf.WriteByte(']')
 	buf.WriteByte(' ')
 
-	// Prefix
-	if h.group != "" {
-		buf.WriteByte('[')
-		buf.WriteString("G:")
-		h.colorize(buf, colorLevel, h.group)
+	// Group marker
+	if h.prefix != "" {
+		buf.WriteString("[G:")
+		h.colorize(buf, colorLevel, h.prefix[:len(h.prefix)-1])
 		buf.WriteByte(']')
 		buf.WriteByte(' ')
 	}
 
-	// Source
-	if h.opt.Config.AddSource {
-		s := source(h.opt.BasePath, r.PC)
-		if s.File == "" {
-			s.File = "???"
-		}
-
-		h.colorize(buf, colorBrightGrey, sourceBuilder(s.File, s.Line))
+	// Source, skipped when the PC is zero per the slog.Handler contract
+	if h.opt.Config.AddSource && r.PC != 0 {
+		h.writeSource(buf, r.PC)
 	}
 
 	// Message
-	buf.WriteString(r.Message)
+	appendEscaped(buf, r.Message)
 
 	// Write preformatted attributes
-	for _, a := range h.preformattedAttrs {
-		h.writeAttributes(buf, r.Level, a)
+	for _, s := range h.preformattedAttrs {
+		h.writeAttrLineStart(buf, r.Level)
+		buf.WriteString(s)
+		h.colorEnd(buf)
 	}
 
 	// Write recorded attributes
 	r.Attrs(func(a slog.Attr) bool {
-		return h.writeAttributes(buf, r.Level, a.String())
+		h.walkAttr(h.groups, h.prefix, a, func(prefix string, a slog.Attr) {
+			h.writeAttrLineStart(buf, r.Level)
+			appendKeyValue(buf, prefix, a)
+			h.colorEnd(buf)
+		})
+		return true
 	})
 
 	buf.WriteByte('\n')
 
-	// Set output
+	// Set output, slog levels are open-ended so anything at or above
+	// ERROR belongs to the error writer
 	output := h.w.Out
-	if r.Level == slog.LevelError {
+	if r.Level >= slog.LevelError {
 		output = h.w.Err
 	}
 
@@ -267,8 +285,8 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	return err
 }
 
-// cancel is a function of logging.Handler for working with logging.Critical
-// it permits to cancel the context and terminate the program
+// Cancel invokes the cancel function attached to the handler, if any, and
+// reports whether one was called. It backs logging.Critical.
 func (h *Handler) Cancel() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -281,36 +299,157 @@ func (h *Handler) Cancel() bool {
 	return true
 }
 
-// colorize writes s to b wrapped in the given ANSI color code.
-// If colored output is disabled, the string is written as-is.
-func (h *Handler) colorize(b *bytes.Buffer, c color, s string) {
-	if !h.opt.Colored {
-		b.WriteString(s)
+// walkAttr resolves a, applies the configured ReplaceAttr, and expands
+// group values, calling emit for each retained leaf attribute with its
+// dot-qualified key prefix. Per the slog.Handler contract, empty
+// attributes are elided, groups with an empty key are inlined, and groups
+// without attributes are dropped.
+func (h *Handler) walkAttr(
+	gs []string, prefix string, a slog.Attr,
+	emit func(prefix string, a slog.Attr),
+) {
+	a.Value = a.Value.Resolve()
+	if rep := h.opt.ReplaceAttr; rep != nil &&
+		a.Value.Kind() != slog.KindGroup {
+		a = rep(gs, a)
+		// ReplaceAttr may itself return an unresolved value
+		a.Value = a.Value.Resolve()
+	}
+
+	if a.Equal(slog.Attr{}) {
 		return
 	}
 
-	b.WriteString(string(c))
+	if a.Value.Kind() != slog.KindGroup {
+		emit(prefix, a)
+		return
+	}
+
+	attrs := a.Value.Group()
+	if len(attrs) == 0 {
+		return
+	}
+	if a.Key != "" {
+		// The full slice expression forces a copy: appending in place
+		// could write into the backing array shared with other
+		// handlers walking their groups concurrently.
+		gs = append(gs[:len(gs):len(gs)], a.Key)
+		prefix += a.Key + "."
+	}
+	for _, ga := range attrs {
+		h.walkAttr(gs, prefix, ga, emit)
+	}
+}
+
+// colorize writes s to b wrapped in the given ANSI color code.
+// If colored output is disabled, the string is written as-is.
+func (h *Handler) colorize(b *bytes.Buffer, c color, s string) {
+	h.colorStart(b, c)
 	b.WriteString(s)
-	b.WriteString(string(colorReset))
+	h.colorEnd(b)
+}
+
+// colorStart begins an ANSI colored span when colors are enabled.
+func (h *Handler) colorStart(b *bytes.Buffer, c color) {
+	if h.opt.Colored {
+		b.WriteString(string(c))
+	}
+}
+
+// colorEnd closes an ANSI colored span when colors are enabled.
+func (h *Handler) colorEnd(b *bytes.Buffer) {
+	if h.opt.Colored {
+		b.WriteString(string(colorReset))
+	}
 }
 
 // writeSyslogPrefix prepends a syslog severity prefix to the buffer
 // when ForceSyslog is enabled.
 func (h *Handler) writeSyslogPrefix(b *bytes.Buffer, l slog.Level) {
 	if h.opt.ForceSyslog {
-		b.WriteString(BuildSyslogPrefix(l))
+		b.WriteString(syslogPrefix(l))
 	}
 }
 
-// writeAttributes writes a single attribute line to the buffer, prefixed with
-// a syslog header (if enabled) and styled in bright grey. It always returns
-// true to satisfy the slog.Record.Attrs callback signature.
-func (h *Handler) writeAttributes(
-	b *bytes.Buffer, l slog.Level, s string,
-) bool {
+// writeSource appends the "file:line: " reference in bright grey.
+func (h *Handler) writeSource(b *bytes.Buffer, pc uintptr) {
+	s := source(h.opt.BasePath, pc)
+	if s.File == "" {
+		s.File = "???"
+	}
+
+	h.colorStart(b, colorBrightGrey)
+	b.WriteString(s.File)
+	b.WriteByte(':')
+	b.Write(strconv.AppendInt(b.AvailableBuffer(), int64(s.Line), 10))
+	b.WriteString(": ")
+	h.colorEnd(b)
+}
+
+// writeAttrLineStart begins an attribute line: newline, optional syslog
+// prefix, and the indent marker opening a bright grey span the caller
+// must close with colorEnd.
+func (h *Handler) writeAttrLineStart(b *bytes.Buffer, l slog.Level) {
 	b.WriteByte('\n')
 	h.writeSyslogPrefix(b, l)
-	h.colorize(b, colorBrightGrey, "\t- "+s)
+	h.colorStart(b, colorBrightGrey)
+	b.WriteString("\t- ")
+}
 
-	return true
+// appendKeyValue writes "key=value" with the group qualification prefix.
+func appendKeyValue(b *bytes.Buffer, prefix string, a slog.Attr) {
+	appendEscaped(b, prefix)
+	appendEscaped(b, a.Key)
+	b.WriteByte('=')
+	appendValue(b, a.Value)
+}
+
+// appendValue writes a resolved value using strconv appenders to avoid
+// the allocations of Value.String on the hot path.
+func appendValue(b *bytes.Buffer, v slog.Value) {
+	switch v.Kind() {
+	case slog.KindString:
+		appendEscaped(b, v.String())
+	case slog.KindInt64:
+		b.Write(strconv.AppendInt(b.AvailableBuffer(), v.Int64(), 10))
+	case slog.KindUint64:
+		b.Write(strconv.AppendUint(b.AvailableBuffer(), v.Uint64(), 10))
+	case slog.KindFloat64:
+		b.Write(strconv.AppendFloat(
+			b.AvailableBuffer(), v.Float64(), 'g', -1, 64))
+	case slog.KindBool:
+		b.Write(strconv.AppendBool(b.AvailableBuffer(), v.Bool()))
+	case slog.KindDuration:
+		b.WriteString(v.Duration().String())
+	case slog.KindTime:
+		b.Write(v.Time().AppendFormat(
+			b.AvailableBuffer(), time.RFC3339Nano))
+	default:
+		appendEscaped(b, v.String())
+	}
+}
+
+// appendEscaped writes s, quoting it with strconv semantics when it
+// contains control bytes, so hostile values can neither forge log lines
+// (CWE-117) nor inject terminal escape sequences (CWE-150).
+func appendEscaped(b *bytes.Buffer, s string) {
+	if !needsEscape(s) {
+		b.WriteString(s)
+		return
+	}
+
+	b.Write(strconv.AppendQuote(b.AvailableBuffer(), s))
+}
+
+// needsEscape reports whether s contains a control byte. Those byte
+// values never occur inside multi-byte UTF-8 sequences, so a byte scan
+// is safe.
+func needsEscape(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+
+	return false
 }
