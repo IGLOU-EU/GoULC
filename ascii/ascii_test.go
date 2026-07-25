@@ -15,7 +15,15 @@ var tests = []struct {
 		str:             "",
 		wantIs:          true,
 		wantIsPrintable: true,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
+		wantHasNil:      false,
+	},
+	{
+		name:            "single ASCII letter",
+		str:             "A",
+		wantIs:          true,
+		wantIsPrintable: true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
@@ -23,7 +31,7 @@ var tests = []struct {
 		str:             "I'll be back!",
 		wantIs:          true,
 		wantIsPrintable: true,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
@@ -31,7 +39,7 @@ var tests = []struct {
 		str:             "~",
 		wantIs:          true,
 		wantIsPrintable: true,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
@@ -39,7 +47,7 @@ var tests = []struct {
 		str:             "Game over\x7fman",
 		wantIs:          true,
 		wantIsPrintable: false,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
@@ -47,7 +55,7 @@ var tests = []struct {
 		str:             "Use the Force 🚀 of emoji",
 		wantIs:          false,
 		wantIsPrintable: false,
-		wantIsExtended:  false,
+		wantIsExtended:  true,
 		wantHasNil:      false,
 	},
 	{
@@ -55,7 +63,7 @@ var tests = []struct {
 		str:             "Winter is coming\x00And so are the nil byte",
 		wantIs:          true,
 		wantIsPrintable: false,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      true,
 	},
 	{
@@ -67,15 +75,23 @@ var tests = []struct {
 		wantHasNil:      false,
 	},
 	{
-		name:            "raw Latin-1 byte",
-		str:             "caf\xe9",
+		name:            "isolated high byte",
+		str:             "\xe9",
 		wantIs:          false,
 		wantIsPrintable: false,
-		wantIsExtended:  false,
+		wantIsExtended:  true,
 		wantHasNil:      false,
 	},
 	{
-		name:            "UTF-8 encoded Latin-1 letter",
+		name:            "single high byte after ASCII",
+		str:             "caf\xe9",
+		wantIs:          false,
+		wantIsPrintable: false,
+		wantIsExtended:  true,
+		wantHasNil:      false,
+	},
+	{
+		name:            "consecutive high bytes",
 		str:             "caf\xc3\xa9",
 		wantIs:          false,
 		wantIsPrintable: false,
@@ -83,19 +99,11 @@ var tests = []struct {
 		wantHasNil:      false,
 	},
 	{
-		name:            "lowest code point above Latin-1",
-		str:             "Ā",
-		wantIs:          false,
-		wantIsPrintable: false,
-		wantIsExtended:  false,
-		wantHasNil:      false,
-	},
-	{
 		name:            "control characters",
 		str:             "To infinity\nand beyond!",
 		wantIs:          true,
 		wantIsPrintable: false,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
@@ -103,7 +111,7 @@ var tests = []struct {
 		str:             "Matrix\x00🕶️ÿReloaded",
 		wantIs:          false,
 		wantIsPrintable: false,
-		wantIsExtended:  false,
+		wantIsExtended:  true,
 		wantHasNil:      true,
 	},
 	{
@@ -111,7 +119,7 @@ var tests = []struct {
 		str:             "Hasta\x00la\x00vista\x00babyte",
 		wantIs:          true,
 		wantIsPrintable: false,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      true,
 	},
 	{
@@ -119,7 +127,7 @@ var tests = []struct {
 		str:             "\n\r\t\b",
 		wantIs:          true,
 		wantIsPrintable: false,
-		wantIsExtended:  true,
+		wantIsExtended:  false,
 		wantHasNil:      false,
 	},
 	{
