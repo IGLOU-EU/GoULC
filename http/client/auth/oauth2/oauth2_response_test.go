@@ -76,36 +76,33 @@ func TestResponse_Unmarshal(t *testing.T) {
 				return
 			}
 
-			if !tt.wantErr {
+			if tt.wantErr {
 				return
 			}
 
 			// Check token response fields
-			if r.Token.Value() != tt.want.Token.Value() {
-				t.Errorf("Token = %v, want %v", r.Token, tt.want.Token)
+			got, want := r.TokenResponse, tt.want.TokenResponse
+			if got.Token.Reveal() != want.Token.Reveal() {
+				t.Errorf("Token = %v, want %v", got.Token, want.Token)
 			}
-			if r.TokenType != tt.want.TokenType {
-				t.Errorf("TokenType = %v, want %v", r.TokenType, tt.want.TokenType)
+			if got.TokenType != want.TokenType {
+				t.Errorf("TokenType = %v, want %v", got.TokenType, want.TokenType)
 			}
-			if r.ExpiresIn != tt.want.ExpiresIn {
-				t.Errorf("ExpiresIn = %v, want %v", r.ExpiresIn, tt.want.ExpiresIn)
+			if got.ExpiresIn != want.ExpiresIn {
+				t.Errorf("ExpiresIn = %v, want %v", got.ExpiresIn, want.ExpiresIn)
 			}
-			if r.RefreshToken.Value() != tt.want.RefreshToken.Value() {
-				t.Errorf("RefreshToken = %v, want %v", r.RefreshToken, tt.want.RefreshToken)
+			if got.RefreshToken.Reveal() != want.RefreshToken.Reveal() {
+				t.Errorf("RefreshToken = %v, want %v",
+					got.RefreshToken, want.RefreshToken)
 			}
-			if r.Scope != tt.want.Scope {
-				t.Errorf("Scope = %v, want %v", r.Scope, tt.want.Scope)
+			if got.Scope != want.Scope {
+				t.Errorf("Scope = %v, want %v", got.Scope, want.Scope)
 			}
 
 			// Check error response fields
-			if r.Error != tt.want.Error {
-				t.Errorf("Error = %v, want %v", r.Error, tt.want.Error)
-			}
-			if r.ErrorDescription != tt.want.ErrorDescription {
-				t.Errorf("ErrorDescription = %v, want %v", r.ErrorDescription, tt.want.ErrorDescription)
-			}
-			if r.ErrorURI != tt.want.ErrorURI {
-				t.Errorf("ErrorURI = %v, want %v", r.ErrorURI, tt.want.ErrorURI)
+			if r.ErrorResponse != tt.want.ErrorResponse {
+				t.Errorf("ErrorResponse = %+v, want %+v",
+					r.ErrorResponse, tt.want.ErrorResponse)
 			}
 		})
 	}

@@ -36,7 +36,7 @@ const (
 )
 
 // Verify Response implements client.Unmarshaler interface
-var _ client.Unmarshaler = &Response{}
+var _ client.Unmarshaler = (*Response)(nil)
 
 // TokenResponse represents successful access token response
 // RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
@@ -66,25 +66,35 @@ type ErrorResponse struct {
 	ErrorURI         string `json:"error_uri"`
 }
 
-// Response represents an OAuth2 response that can contain either
-// a successful token response or an error response.
-// It implements the response.Response interface for handling HTTP responses
-// in a standardized way.
+// Response represents an OAuth2 token endpoint response, which carries
+// either a successful token response or an error response.
+// It implements the client.Unmarshaler interface for handling HTTP
+// responses in a standardized way.
 type Response struct {
-	TokenResponse
-	ErrorResponse
+	// TokenResponse holds the fields of a successful response.
+	TokenResponse TokenResponse
+	// ErrorResponse holds the fields of an error response. Check
+	// ErrorResponse.IsEmpty to know whether the server returned one.
+	ErrorResponse ErrorResponse
 }
 
 // Name returns the identifier for this response type.
-// It implements the response.Response interface.
+// It implements the client.Unmarshaler interface.
 func (_ Response) Name() string {
 	return ResponseName
 }
 
 // Unmarshal parses the JSON-encoded response body and stores the result
-// in the Response struct. It implements the response.Response interface.
+// in the Response struct. It implements the client.Unmarshaler interface.
+//
+// The token endpoint returns a single flat JSON object whose meaning
+// depends on the HTTP status (RFC 6749 §5.1 and §5.2), so both views
+// are decoded from the same body.
 //
 // Return an error if JSON unmarshaling fails, nil otherwise.
 func (r *Response) Unmarshal(_ int, _ http.Header, body []byte) error {
-	return json.Unmarshal(body, r)
+	if err := json.Unmarshal(body, &r.TokenResponse); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, &r.ErrorResponse)
 }
