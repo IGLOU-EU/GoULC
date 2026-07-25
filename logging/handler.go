@@ -172,8 +172,11 @@ func (h *Handler) WithGroup(group string) slog.Handler {
 	}
 
 	newHandler := h.clone()
+	// groups keeps the raw name for ReplaceAttr, while the rendered
+	// prefix is escaped once here so the [G:...] marker and the key
+	// prefixes never carry control bytes, at no per-record cost.
 	newHandler.groups = append(newHandler.groups, group)
-	newHandler.prefix = h.prefix + group + "."
+	newHandler.prefix = h.prefix + escapeGroupName(group) + "."
 
 	return newHandler
 }
@@ -427,6 +430,17 @@ func appendValue(b *bytes.Buffer, v slog.Value) {
 	default:
 		appendEscaped(b, v.String())
 	}
+}
+
+// escapeGroupName quotes a group name containing control bytes, with
+// the same strconv semantics as appendEscaped. It runs when a group is
+// derived, not per record.
+func escapeGroupName(s string) string {
+	if !needsEscape(s) {
+		return s
+	}
+
+	return strconv.Quote(s)
 }
 
 // appendEscaped writes s, quoting it with strconv semantics when it
