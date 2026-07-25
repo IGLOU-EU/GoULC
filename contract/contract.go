@@ -19,8 +19,8 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
-// Package contract declares idiomatic named interfaces for common method
-// conventions that the standard library leaves implicit or unexported.
+// Package contract declares idiomatic named types for common conventions that
+// the standard library leaves implicit or unexported.
 //
 // Declaring them once allows two things across the rest of GoULC:
 //   - explicit compile-time conformance assertions
@@ -30,10 +30,12 @@
 //     (if z, ok := v.(contract.IsZeroer); ok { ... }) instead of the costlier
 //     reflect.Value.IsZero.
 //
-// This package is a leaf: it imports nothing, so any other package can depend
-// on it without risking an import cycle. Add a new interface only when a real
-// need arises, never speculatively.
+// This package is a leaf: it imports only the standard library, so any other
+// package can depend on it without risking an import cycle. Add a new type only
+// when a real need arises, never speculatively.
 package contract
+
+import "time"
 
 // IsZeroer is implemented by types that report whether they hold their zero
 // value. It mirrors the unexported encoding/json.isZeroer interface used by the
@@ -48,3 +50,8 @@ type IsZeroer interface {
 type Emptier interface {
 	IsEmpty() bool
 }
+
+// TimeNow returns the current time. It is a named function type for injecting
+// a clock into a struct, so code that reads the current time stays testable
+// against a fixed clock instead of calling time.Now directly.
+type TimeNow func() time.Time
