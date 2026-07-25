@@ -61,7 +61,7 @@ var (
 
 // Marshal encodes values as JSON Lines (JSONL). Each value is marshaled
 // as a single JSON object, separated by newlines. A nil or empty slice
-// returns an empty byte slice.
+// returns a nil byte slice.
 func Marshal[T any](records []T) ([]byte, error) {
 	if len(records) == 0 {
 		return nil, nil
@@ -81,7 +81,7 @@ func Marshal[T any](records []T) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Unmarshal parses JSON Lines (JSONL) data into a slice of typed records
+// Unmarshal parses JSON Lines (JSONL) data into a slice of typed records.
 func Unmarshal[T any](data []byte) ([]T, error) {
 	if len(data) == 0 {
 		return nil, nil
