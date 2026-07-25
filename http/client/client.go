@@ -42,7 +42,7 @@ import (
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/utils"
+	"gitlab.com/iglou.eu/goulc/http/path"
 )
 
 const (
@@ -189,7 +189,7 @@ func New(
 	}
 
 	main.URL = *parsedURL
-	main.URL.Path = utils.PathFormatting(main.URL.Path)
+	main.URL.Path = path.Format(main.URL.Path)
 	main.context, main.cancel = context.WithCancel(ctx)
 
 	if authenticator != nil {
@@ -213,7 +213,7 @@ func New(
 // but operates independently. The new client is isolated from the parent,
 // allowing for concurrent modifications without affecting the parent client.
 //
-// The path parameter is appended to the parent's URL path. If empty,
+// The childPath parameter is appended to the parent's URL path. If empty,
 // the parent's path remains unchanged. The path is automatically formatted
 // to ensure proper URL structure.
 //
@@ -222,11 +222,11 @@ func New(
 // parent := client.New("https://api.example.com", nil, nil, nil)
 // child := parent.NewChild("/v1/users")
 // // child URL will be https://api.example.com/v1/users
-func (c *Client) NewChild(path string) *Client {
+func (c *Client) NewChild(childPath string) *Client {
 	child := c.Clone()
 
-	if path != "" {
-		newPath := utils.PathFormatting(path)
+	if childPath != "" {
+		newPath := path.Format(childPath)
 
 		if child.URL.Path == "/" {
 			child.URL.Path = newPath
