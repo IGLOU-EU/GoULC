@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	net_http "net/http"
@@ -70,6 +71,12 @@ const (
 	ClientInBody
 )
 
+// expiryMargin is the anticipation window applied to token expiry: a
+// token that close to expiring is refreshed early so it cannot be
+// rejected while a request is in flight. Tokens whose lifetime is
+// shorter than the margin are refreshed on every request.
+const expiryMargin = 30 * time.Second
+
 // Verify ClientCredentials implements Authenticator interface
 var _ auth.Authenticator = &ClientCredentials{}
 
@@ -78,6 +85,12 @@ var _ auth.Authenticator = &ClientCredentials{}
 type ClientCredentials struct {
 	log  *slog.Logger
 	http *client.Client
+
+	// mu guards Token so a refresh cannot race a concurrent header read
+	mu sync.Mutex
+
+	// now returns the current time, injectable so tests can pin expiry
+	now func() time.Time
 
 	Config     Config
 	ClientAuth ClientCredentialsType
@@ -122,36 +135,56 @@ func (_ *ClientCredentials) Name() string {
 	return ClientCredentialsName
 }
 
-// Update refreshes the access token if it has expired,
-// ensuring valid authentication for requests.
+// Update refreshes the access token when it is expired or about to
+// expire, ensuring valid authentication for requests. It is safe for
+// concurrent use.
 func (g *ClientCredentials) Update() error {
-	if g.Token.ExpireAt.After(time.Now()) {
-		g.log.Debug("Access token are not expired")
+	// The whole check-then-refresh sequence stays under the lock so
+	// two concurrent calls cannot both decide to refresh
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.Token.ExpireAt.After(g.timeNow().Add(expiryMargin)) {
+		g.log.Debug("Access token is still valid")
 		return nil
 	}
 
 	// There is no refresh token on client credentials grant
 	// RFC 6749 §4.4.3: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3
-	g.log.Debug("Creation of a new access token waze required",
-		"access_token", g.Token)
+	g.log.Debug("Requesting a new access token")
 	return g.newToken()
 }
 
 // Header provides the authorization header required
-// for authenticated HTTP requests.
+// for authenticated HTTP requests. It is safe for concurrent use.
 func (g *ClientCredentials) Header(_ string, _ *url.URL, _ []byte,
 ) (headerKey, headerValue string, err error) {
+	g.mu.Lock()
+	token := hided.Value[string](g.Token.Token)
+	g.mu.Unlock()
+
 	return ClientCredentialsHeaderName,
-		ClientCredentialsHeaderPrefix + hided.Value[string](g.Token.Token),
+		ClientCredentialsHeaderPrefix + token,
 		nil
 }
 
-// Clone creates a deep copy of the ClientCredentials instance,
-// ensuring thread-safe modifications.
+// Clone creates an independent copy of the ClientCredentials instance
+// with its own token cache and its own child HTTP client. When the
+// underlying HTTP client is already closed, the copy is created without
+// one and its next token refresh fails with client.ErrClientClosed.
 func (g *ClientCredentials) Clone() auth.Authenticator {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	var child *client.Client
+	if g.http != nil {
+		child = g.http.NewChild("")
+	}
+
 	return &ClientCredentials{
 		log:  g.log,
-		http: g.http.NewChild(""),
+		http: child,
+		now:  g.now,
 
 		Config:     g.Config,
 		ClientAuth: g.ClientAuth,
@@ -219,8 +252,19 @@ func (g *ClientCredentials) newToken() error {
 	}
 
 	// Feed the token !
+	// The expires_in value is a lifetime in seconds (RFC 6749 §5.1)
 	g.Token = tokenResp.TokenResponse
-	g.Token.ExpireAt = time.Now().Add(g.Token.ExpiresIn.Duration)
+	g.Token.ExpireAt = g.timeNow().Add(
+		time.Duration(g.Token.ExpiresIn) * time.Second)
 
 	return nil
+}
+
+// timeNow returns the injected clock when one is set, so instances
+// built without the constructor keep working on the real clock.
+func (g *ClientCredentials) timeNow() time.Time {
+	if g.now != nil {
+		return g.now()
+	}
+	return time.Now()
 }
