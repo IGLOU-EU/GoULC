@@ -84,7 +84,12 @@ type ClientCredentials struct {
 	log  *slog.Logger
 	http *client.Client
 
-	// mu guards Token so a refresh cannot race a concurrent header read
+	// tokenClient is the child client bound to the token endpoint,
+	// built once on the first refresh and reused afterward
+	tokenClient *client.Client
+
+	// mu guards Token and tokenClient so a refresh cannot race a
+	// concurrent header read
 	mu sync.Mutex
 
 	// now returns the current time, injectable so tests can pin expiry
@@ -192,12 +197,12 @@ func (g *ClientCredentials) Clone() auth.Authenticator {
 }
 
 // newToken requests a new access token from the authorization server
-// using client credentials.
+// using client credentials. The caller must hold g.mu.
 func (g *ClientCredentials) newToken() error {
-	var tokenResp Response
-
-	// New request to Auth
-	c := g.http.NewChild(g.Config.Endpoint.Auth)
+	c, err := g.tokenEndpoint()
+	if err != nil {
+		return err
+	}
 
 	// Build the request body
 	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
@@ -215,24 +220,26 @@ func (g *ClientCredentials) newToken() error {
 		data.Set("client_secret", g.Config.ClientSecret.Reveal())
 	}
 
-	// RFC 6749 §4.4.1: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.1
-	c.Header.Set("Authorization", "Basic "+auth.BasicUserPass(
-		g.Config.ClientID, g.Config.ClientSecret.Reveal()))
-	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
-	c.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
 	// Due to body presence we need to use a POST type
 	// RFC 6749 §3.1: https://www.rfc-editor.org/rfc/rfc6749#section-3.1
+	var tokenResp Response
 	res, err := c.Do(http.MethodPost, []byte(data.Encode()), &tokenResp)
 	if err != nil {
 		return err
 	}
 
+	// The raw body is never logged: it can hold the token in clear
+	// when unmarshaling missed a field, so only chosen fields go out
+
 	// RFC 6749 §4.4.3: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.3
 	if res.StatusCode != http.StatusOK {
-		g.log.Debug("Unexpected server response",
-			"code", res.Status,
-			"body", res.Body)
+		if g.debugEnabled() {
+			g.log.Debug("Unexpected server response",
+				"status_code", res.StatusCode,
+				"error", tokenResp.ErrorResponse.Error,
+				"error_description",
+				tokenResp.ErrorResponse.ErrorDescription)
+		}
 		return ErrUnexpectedStatusCode
 	}
 
@@ -243,9 +250,12 @@ func (g *ClientCredentials) newToken() error {
 
 	// Check if the body contains the expected token
 	if tokenResp.TokenResponse.Token.IsEmpty() {
-		g.log.Debug("No token found in the response",
-			"unmarshaler", tokenResp,
-			"raw", string(res.Body))
+		if g.debugEnabled() {
+			g.log.Debug("No token found in the response",
+				"error", tokenResp.ErrorResponse.Error,
+				"error_description",
+				tokenResp.ErrorResponse.ErrorDescription)
+		}
 		return ErrNoToken
 	}
 
@@ -256,6 +266,41 @@ func (g *ClientCredentials) newToken() error {
 		time.Duration(g.Token.ExpiresIn) * time.Second)
 
 	return nil
+}
+
+// tokenEndpoint returns the child client bound to the token endpoint,
+// building and configuring it on first use so a refresh does not clone
+// and register a new client every time. The caller must hold g.mu.
+func (g *ClientCredentials) tokenEndpoint() (*client.Client, error) {
+	if g.tokenClient != nil {
+		return g.tokenClient, nil
+	}
+
+	// A missing or already closed parent client cannot serve requests,
+	// NewChild reports the closed case with nil
+	if g.http == nil {
+		return nil, client.ErrClientClosed
+	}
+
+	c := g.http.NewChild(g.Config.Endpoint.Auth)
+	if c == nil {
+		return nil, client.ErrClientClosed
+	}
+
+	// RFC 6749 §4.4.1: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.1
+	c.Header.Set("Authorization", "Basic "+auth.BasicUserPass(
+		g.Config.ClientID, g.Config.ClientSecret.Reveal()))
+	// RFC 6749 §4.4.2: https://www.rfc-editor.org/rfc/rfc6749#section-4.4.2
+	c.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	g.tokenClient = c
+	return c, nil
+}
+
+// debugEnabled reports whether debug records are collected, letting the
+// refresh path skip building its log arguments.
+func (g *ClientCredentials) debugEnabled() bool {
+	return g.log.Enabled(context.Background(), slog.LevelDebug)
 }
 
 // timeNow returns the injected clock when one is set, so instances

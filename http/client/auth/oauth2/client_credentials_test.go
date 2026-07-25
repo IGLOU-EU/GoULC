@@ -249,6 +249,41 @@ func TestClientCredentials_TokenCache(t *testing.T) {
 	}
 }
 
+func TestClientCredentials_UpdateClosedClient(t *testing.T) {
+	httpClient, err := client.New(
+		context.Background(), "https://example.com", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("client.New() unexpected error: %v", err)
+	}
+	if err := httpClient.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+
+	cc, err := oauth2.NewClientCredentials(oauth2.ClientInHeader, oauth2.Config{
+		ClientID:     "test-client",
+		ClientSecret: hided.NewString("test-secret"),
+		Endpoint: oauth2.Endpoint{
+			URL:  "https://example.com",
+			Auth: "/oauth/token",
+		},
+	}, nil, &httpClient)
+	if err != nil {
+		t.Fatalf("NewClientCredentials() unexpected error: %v", err)
+	}
+
+	// A refresh through a closed client must surface the closure
+	// instead of panicking on the nil child
+	if err := cc.Update(); !errors.Is(err, client.ErrClientClosed) {
+		t.Errorf("Update() error = %v, want %v", err, client.ErrClientClosed)
+	}
+
+	// A clone of it carries no usable client and must report the same
+	if err := cc.Clone().Update(); !errors.Is(err, client.ErrClientClosed) {
+		t.Errorf("Clone().Update() error = %v, want %v",
+			err, client.ErrClientClosed)
+	}
+}
+
 func TestClientCredentials_ConcurrentUpdateHeader(t *testing.T) {
 	var hits atomic.Int32
 	// A zero lifetime forces a refresh on every Update, exercising
