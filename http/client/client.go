@@ -275,9 +275,11 @@ func (c *Client) NewChild(childPath string) *Client {
 		}
 	}
 
-	c.logger.Debug("new child client created",
-		"parent_url", c.URL.String(),
-		"child_url", child.URL.String())
+	if c.logger.Enabled(c.context, slog.LevelDebug) {
+		c.logger.Debug("new child client created",
+			"parent_url", c.URL.String(),
+			"child_url", child.URL.String())
+	}
 	return child
 }
 
@@ -303,9 +305,11 @@ func (c *Client) NewChildSegments(segments ...string) *Client {
 
 	child.URL = *child.URL.JoinPath(escaped...)
 
-	c.logger.Debug("new child client created",
-		"parent_url", c.URL.String(),
-		"child_url", child.URL.String())
+	if c.logger.Enabled(c.context, slog.LevelDebug) {
+		c.logger.Debug("new child client created",
+			"parent_url", c.URL.String(),
+			"child_url", child.URL.String())
+	}
 	return child
 }
 
@@ -394,10 +398,11 @@ func (c *Client) copyLocked() *Client {
 //
 // client.FlushHeader().FlushQuery()
 func (c *Client) FlushHeader() *Client {
-	c.logger.Debug("flushing headers", "current_headers",
-		slices.Sorted(maps.Keys(c.Header)))
-
 	c.mu.Lock()
+	if c.logger.Enabled(c.context, slog.LevelDebug) {
+		c.logger.Debug("flushing headers", "current_headers",
+			slices.Sorted(maps.Keys(c.Header)))
+	}
 	c.Header = http.Header{}
 	c.mu.Unlock()
 
@@ -413,9 +418,10 @@ func (c *Client) FlushHeader() *Client {
 //
 // client.FlushQuery().Do(http.MethodGet, nil, nil)
 func (c *Client) FlushQuery() *Client {
-	c.logger.Debug("flushing query parameters", "current_query", c.Query)
-
 	c.mu.Lock()
+	if c.logger.Enabled(c.context, slog.LevelDebug) {
+		c.logger.Debug("flushing query parameters", "current_query", c.Query)
+	}
 	c.Query = url.Values{}
 	c.mu.Unlock()
 
@@ -489,9 +495,11 @@ func (c *Client) FollowRedirects(
 			}
 		}
 
-		c.logger.Debug("follow redirection",
-			"from", prevURL, "to", req.URL.String(),
-			"redirect_count", nb, "max_redirect", c.Options.MaxRedirect)
+		if c.logger.Enabled(c.context, slog.LevelDebug) {
+			c.logger.Debug("follow redirection",
+				"from", prevURL, "to", req.URL.String(),
+				"redirect_count", nb, "max_redirect", c.Options.MaxRedirect)
+		}
 		return nil
 	}
 }
@@ -614,9 +622,11 @@ func (main *Client) DoWithMarshal(
 		return nil, err
 	}
 
-	main.logger.Debug("http client marshalling body",
-		"marshaller", body.Name(),
-		"content_type", body.ContentType())
+	if main.logger.Enabled(main.context, slog.LevelDebug) {
+		main.logger.Debug("http client marshalling body",
+			"marshaller", body.Name(),
+			"content_type", body.ContentType())
+	}
 
 	return main.doRequest(method, body.ContentType(), bodyData, resp)
 }
@@ -678,9 +688,14 @@ func (main *Client) doRequest(
 		return nil, errors.Join(ErrInvalidMethod, ErrEmptyMethod)
 	}
 
+	// Debug arguments below allocate, skip them when the level is off
+	debug := c.logger.Enabled(c.context, slog.LevelDebug)
+
 	// Add query to URL
 	if len(c.Query) > 0 {
-		c.logger.Debug("encoding query parameters", "query", c.Query)
+		if debug {
+			c.logger.Debug("encoding query parameters", "query", c.Query)
+		}
 		c.URL.RawQuery = c.Query.Encode()
 	}
 
@@ -709,9 +724,11 @@ func (main *Client) doRequest(
 	}
 
 	if body != nil && req.Header.Get("Content-Type") == "" {
-		c.logger.Debug("setting the default content type",
-			"content_type", "application/json",
-			"body_size", len(body))
+		if debug {
+			c.logger.Debug("setting the default content type",
+				"content_type", "application/json",
+				"body_size", len(body))
+		}
 		req.Header.Set("Content-Type", "application/json")
 	}
 
@@ -719,8 +736,10 @@ func (main *Client) doRequest(
 	// Some auth methods might need to read the body to generate the auth header
 	// (e.g., for signing the request)
 	if c.Auth != nil {
-		c.logger.Debug("adding authentication header",
-			"auth_name", c.Auth.Name())
+		if debug {
+			c.logger.Debug("adding authentication header",
+				"auth_name", c.Auth.Name())
+		}
 
 		if err := c.Auth.Update(); err != nil {
 			return nil, err
@@ -742,10 +761,12 @@ func (main *Client) doRequest(
 	httpClient.Timeout = c.Options.Timeout
 	httpClient.CheckRedirect = c.FollowRedirects(&redirectsVia)
 
-	c.logger.Debug("executing HTTP request",
-		"method", req.Method,
-		"url", req.URL.String(),
-		"headers", slices.Sorted(maps.Keys(req.Header)))
+	if debug {
+		c.logger.Debug("executing HTTP request",
+			"method", req.Method,
+			"url", req.URL.String(),
+			"headers", slices.Sorted(maps.Keys(req.Header)))
+	}
 
 	start := time.Now()
 
@@ -774,21 +795,26 @@ func (main *Client) doRequest(
 		Trace:        redirectsVia,
 	}
 
-	c.logger.Debug("HTTP request",
-		"success", resp.Success,
-		"method", req.Method,
-		"path", req.URL.Path,
-		"status", resp.Status,
-		"trace", resp.Trace,
-		"response_time", resp.ResponseTime)
+	if debug {
+		c.logger.Debug("HTTP request",
+			"success", resp.Success,
+			"method", req.Method,
+			"path", req.URL.Path,
+			"status", resp.Status,
+			"trace", resp.Trace,
+			"response_time", resp.ResponseTime)
+	}
 
 	if httpRes.ContentLength == 0 {
 		c.logger.Debug("empty response body received")
 		return resp, nil
 	}
-	c.logger.Debug("reading response body",
-		"status_code", resp.StatusCode,
-		"content_length", httpRes.ContentLength)
+
+	if debug {
+		c.logger.Debug("reading response body",
+			"status_code", resp.StatusCode,
+			"content_length", httpRes.ContentLength)
+	}
 
 	// Cap the read so a hostile server cannot exhaust memory, one
 	// extra byte makes an over-limit body distinguishable
@@ -813,9 +839,11 @@ func (main *Client) doRequest(
 	// The unmarshaler has access to both the status code and body
 	// to handle different response formats based on status
 	if respUml != nil {
-		c.logger.Debug("unmarshaling response body",
-			"unmarshaler", respUml.Name(),
-			"body_size", len(resp.Body))
+		if debug {
+			c.logger.Debug("unmarshaling response body",
+				"unmarshaler", respUml.Name(),
+				"body_size", len(resp.Body))
+		}
 
 		resp.BodyUml = respUml
 		if err := resp.BodyUml.Unmarshal(
