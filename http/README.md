@@ -26,6 +26,7 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
 
 - **🔄 Request Handling:**
   - Automatic body marshaling/unmarshaling
+  - Typed access to unmarshaled responses (`Result[T]`)
   - Customizable timeout settings
   - TLS configuration
   - Context support
