@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"time"
 
+	"gitlab.com/iglou.eu/goulc/contract"
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 )
@@ -35,8 +36,11 @@ const (
 	ResponseName = "oauth2.Response"
 )
 
-// Verify Response implements client.Unmarshaler interface
-var _ client.Unmarshaler = (*Response)(nil)
+// Verify interface conformance at compile time
+var (
+	_ client.Unmarshaler = (*Response)(nil)
+	_ contract.Emptier   = ErrorResponse{}
+)
 
 // TokenResponse represents successful access token response
 // RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
@@ -64,6 +68,13 @@ type ErrorResponse struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
 	ErrorURI         string `json:"error_uri"`
+}
+
+// IsEmpty reports whether the response carries no error. The error code
+// is required on OAuth2 error responses (RFC 6749 §5.2), so an empty
+// code means the server did not return an error.
+func (e ErrorResponse) IsEmpty() bool {
+	return e.Error == ""
 }
 
 // Response represents an OAuth2 token endpoint response, which carries

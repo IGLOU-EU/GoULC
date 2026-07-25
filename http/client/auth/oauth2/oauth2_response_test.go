@@ -15,6 +15,38 @@ func TestResponse_Name(t *testing.T) {
 	}
 }
 
+func TestErrorResponse_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		give oauth2.ErrorResponse
+		want bool
+	}{
+		{
+			name: "zero value reports empty",
+			give: oauth2.ErrorResponse{},
+			want: true,
+		},
+		{
+			name: "error code reports not empty",
+			give: oauth2.ErrorResponse{Error: "invalid_request"},
+			want: false,
+		},
+		{
+			name: "description without the required error code reports empty",
+			give: oauth2.ErrorResponse{ErrorDescription: "broken server"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.give.IsEmpty(); got != tt.want {
+				t.Errorf("IsEmpty() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResponse_Unmarshal(t *testing.T) {
 	tests := []struct {
 		name    string
