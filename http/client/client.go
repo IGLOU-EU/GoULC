@@ -269,7 +269,7 @@ func New(
 // child := parent.NewChild("/v1/users")
 // // child URL will be https://api.example.com/v1/users
 func (c *Client) NewChild(childPath string) *Client {
-	child := c.Clone()
+	child := c.newChild()
 	if child == nil {
 		return nil
 	}
@@ -282,6 +282,12 @@ func (c *Client) NewChild(childPath string) *Client {
 		} else {
 			child.URL.Path += newPath
 		}
+	}
+
+	// Publish only the finished child, a concurrent Close must never
+	// see it half built
+	if !c.registerChild(child) {
+		return nil
 	}
 
 	if c.debugEnabled() {
@@ -302,17 +308,25 @@ func (c *Client) NewChild(childPath string) *Client {
 //
 // child := parent.NewChildSegments("projects", projectID, "tasks", taskID)
 func (c *Client) NewChildSegments(segments ...string) *Client {
-	child := c.Clone()
-	if child == nil || len(segments) == 0 {
-		return child
+	child := c.newChild()
+	if child == nil {
+		return nil
 	}
 
-	escaped := make([]string, len(segments))
-	for i, segment := range segments {
-		escaped[i] = escapeSegment(segment)
+	if len(segments) > 0 {
+		escaped := make([]string, len(segments))
+		for i, segment := range segments {
+			escaped[i] = escapeSegment(segment)
+		}
+
+		child.URL = *child.URL.JoinPath(escaped...)
 	}
 
-	child.URL = *child.URL.JoinPath(escaped...)
+	// Publish only the finished child, a concurrent Close must never
+	// see it half built
+	if !c.registerChild(child) {
+		return nil
+	}
 
 	if c.debugEnabled() {
 		c.logger.Debug("new child client created",
@@ -343,26 +357,47 @@ func escapeSegment(segment string) string {
 // Client is closed, Clone returns nil. The new Client’s context is derived
 // from the original’s context, and authentication is cloned if it exists.
 func (c *Client) Clone() *Client {
-	// Registration happens under the same lock as the copy so a
-	// concurrent Close cannot slip between them and miss the new child
+	clone := c.newChild()
+	if clone == nil || !c.registerChild(clone) {
+		return nil
+	}
+
+	return clone
+}
+
+// newChild builds an unregistered long-lived child. Unlike request
+// snapshots it deep-clones the authenticator so both lineages evolve
+// independently. The caller must publish it with registerChild once the
+// child is fully built, and only then: a concurrent Close cascade must
+// never reach a child still under construction.
+func (c *Client) newChild() *Client {
+	child := c.snapshot()
+	if child == nil {
+		return nil
+	}
+
+	if child.Auth != nil {
+		child.Auth = child.Auth.Clone()
+	}
+
+	return child
+}
+
+// registerChild publishes a fully built child to the closer list so the
+// parent Close cascades to it. When the parent closed in the meantime it
+// releases the child context and reports false, so no orphan escapes.
+func (c *Client) registerChild(child *Client) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.closed {
-		return nil
+		child.cancel()
+		return false
 	}
 
-	clone := c.copyLocked()
+	c.closer = append(c.closer, child.Close)
 
-	// A long-lived clone gets its own authenticator so both lineages
-	// evolve independently, unlike per-request snapshots
-	if c.Auth != nil {
-		clone.Auth = c.Auth.Clone()
-	}
-
-	c.closer = append(c.closer, clone.Close)
-
-	return clone
+	return true
 }
 
 // snapshot returns a private copy of the client state so an in-flight
@@ -521,14 +556,16 @@ func (c *Client) FollowRedirects(
 	}
 }
 
-// Close gracefully shuts down the Client and releases all associated resources.
-// It marks the Client as closed to prevent new requests, logs the closure
-// process, and waits for active requests to complete within the configured
-// timeout. If active requests do not finish before the timeout, a warning is
-// logged. Child clients are closed in cascade and their errors are joined
-// into the returned error. After calling Close, the Client cannot be reused.
+// Close gracefully shuts down the Client. It marks the Client as closed
+// to prevent new requests, cancels its context, waits for active
+// requests to complete within the configured timeout, and releases the
+// pooled connections it owns. If active requests do not finish before
+// the timeout, a warning is logged. Child clients are closed in cascade
+// and their errors are joined into the returned error. After calling
+// Close, the Client cannot be reused.
 func (c *Client) Close() error {
-	// Lock temporarily to avoid hanging active requests
+	// Lock temporarily to avoid hanging active requests. The URL is
+	// captured under the lock, log arguments must not read shared state
 	c.mu.Lock()
 	if c.closed {
 		// In case the context was not closed
@@ -541,11 +578,12 @@ func (c *Client) Close() error {
 	}
 	c.closed = true
 	timeOut := c.Options.Timeout
+	closingURL := c.URL.String()
 	c.mu.Unlock()
 
 	// Log closing
 	c.logger.Debug("closing http client",
-		"url", c.URL.String(),
+		"url", closingURL,
 		"active_requests", c.activeRequests.Load())
 
 	// Wait for active requests to complete (with timeout)
@@ -579,7 +617,9 @@ func (c *Client) Close() error {
 		}
 	}
 
-	// Clean up resources
+	// Release resources. Shared fields (URL, Header, Options, logger)
+	// are left in place on purpose: zeroing them raced with lock-free
+	// readers, and the closed flag already prevents any further use
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -596,12 +636,6 @@ func (c *Client) Close() error {
 		c.httpClient = nil
 	}
 
-	c.Options = Options{}
-	c.Header = nil
-	c.Auth = nil
-	c.URL = url.URL{}
-	c.Query = nil
-
 	// Close all child clients, keeping their errors visible to the caller
 	var errs []error
 	for _, closeChild := range c.closer {
@@ -615,7 +649,6 @@ func (c *Client) Close() error {
 	}
 
 	c.closer = nil
-	c.logger = nil
 
 	return errors.Join(errs...)
 }

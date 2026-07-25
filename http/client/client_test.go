@@ -1063,6 +1063,45 @@ func TestClient_Clone(t *testing.T) {
 	}
 }
 
+// TestClient_NewChildCloseRace hammers NewChild against a concurrent
+// Close of the parent. A child must be fully built before it is
+// published to the parent closer list, otherwise the closing cascade
+// reaches a child whose URL is still being written. The logger stays at
+// info level on purpose: the race is structural, not a debug artifact.
+// Meaningful under -race.
+func TestClient_NewChildCloseRace(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard,
+		&slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	for range 200 {
+		c, err := client.New(context.Background(),
+			"https://vault13.wasteland", nil, nil, logger)
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		wg := sync.WaitGroup{}
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for range 40 {
+				if child := c.NewChild("/vault/door"); child == nil {
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := c.Close(); err != nil {
+				t.Errorf("Close() error = %v", err)
+			}
+		}()
+
+		wg.Wait()
+	}
+}
+
 // TestClient_CloneCloseRace runs Clone against a concurrent Close: every
 // clone handed out must be closed in cascade, none may end up orphaned.
 func TestClient_CloneCloseRace(t *testing.T) {
