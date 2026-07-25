@@ -52,7 +52,7 @@ if err != nil {
 log.Info("Hello, World!") // Output: myapp/handler/auth.go:42: Hello, World!
 
 // You can also use an empty string, which will show full paths
-log, err := logging.New("", cfg)
+log, err = logging.New("", cfg)
 if err != nil {
     panic(err)
 }
@@ -118,11 +118,12 @@ and `logging.Writer` are aliases of the `logging/model` types, so the
 
 ```go
 type Config struct {
-    Level       string // Log level (DEBUG, INFO, WARN, ERROR)
-    Colored     bool   // Enable colored output
-    AddSource   bool   // Include source code reference in logs
-    ForceSyslog bool   // Force syslog severity prefixes
-    TimeFormat  string // Custom time format layout
+    Level       string             // Log level (DEBUG, INFO, WARN, ERROR)
+    Colored     bool               // Enable colored output
+    AddSource   bool               // Include source code reference in logs
+    ForceSyslog bool               // Force syslog severity prefixes
+    TimeFormat  string             // Custom time format layout
+    Cancel      context.CancelFunc // Called by Critical instead of os.Exit(1)
 }
 ```
 
@@ -178,7 +179,7 @@ in the package comment.
 
 ## Syslog
 
-When using the default writer (nil used no `Writer` provided), the package automatically detects whether it is running under systemd's journal by checking the `JOURNAL_STREAM` environment variable. If detected, syslog severity prefixes (`<N>`) are prepended to each log line and colored output is disabled. This detection only applies when using the default writer to avoid impacting custom writers.
+When using the default writer (nil or no `Writer` provided), the package automatically detects whether it is running under systemd's journal by checking the `JOURNAL_STREAM` environment variable. If detected, syslog severity prefixes (`<N>`) are prepended to each log line and colored output is disabled. This detection only applies when using the default writer to avoid impacting custom writers.
 
 You can also force this behavior manually by setting `ForceSyslog: true` in the configuration.
 
