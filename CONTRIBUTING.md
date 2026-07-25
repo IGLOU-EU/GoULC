@@ -4,7 +4,7 @@ Thank you for your interest in contributing to GoULC! We welcome contributions f
 
 ## Code Licensing 🔒
 
-- All contributions must be made under the GNU General Public License v3.0 (GPLv3).
+- All contributions must be made under the GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later).
 
 ## Commit Guidelines 📝
 
