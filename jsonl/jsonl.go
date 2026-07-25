@@ -129,8 +129,17 @@ func UnmarshalStreamLimit[T any](r io.Reader, maxLineSize int) ([]T, error) {
 		maxLineSize = DefaultMaxLineSize
 	}
 
+	// The scanner reports a full buffer before it can see the trailing
+	// delimiter, so it needs one spare byte for a line of exactly
+	// maxLineSize bytes to keep the bound inclusive. Saturate instead
+	// of overflowing on huge bounds.
+	bufMax := maxLineSize + 1
+	if bufMax < maxLineSize {
+		bufMax = maxLineSize
+	}
+
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(nil, maxLineSize)
+	scanner.Buffer(nil, bufMax)
 
 	var records []T
 

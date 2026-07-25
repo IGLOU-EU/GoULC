@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"reflect"
 	"runtime"
 	"strings"
@@ -298,6 +299,13 @@ func TestUnmarshalStreamLimit(t *testing.T) {
 	longQuote := strings.Repeat("a", 200)
 	longLine := `{"id":1,"character":"HAL 9000","quote":"` + longQuote + `","is_major_tom":false}`
 
+	// The {"quote":""} wrapper is 12 bytes, so a 52-byte quote makes a
+	// line of exactly 64 bytes, the limit used by the boundary cases.
+	exactQuote := strings.Repeat("a", 52)
+	exactLine := `{"quote":"` + exactQuote + `"}`
+	overQuote := strings.Repeat("a", 53)
+	overLine := `{"quote":"` + overQuote + `"}`
+
 	tests := []struct {
 		name        string
 		input       string
@@ -333,6 +341,40 @@ func TestUnmarshalStreamLimit(t *testing.T) {
 			name:        "non-positive limit falls back to the default",
 			input:       longLine + "\n",
 			maxLineSize: 0,
+			want:        []spaceLog{{ID: 1, Character: "HAL 9000", Quote: longQuote}},
+		},
+		{
+			name:        "line of exactly the limit with newline is accepted",
+			input:       exactLine + "\n",
+			maxLineSize: 64,
+			want:        []spaceLog{{Quote: exactQuote}},
+		},
+		{
+			name:        "line of exactly the limit without newline is accepted",
+			input:       exactLine,
+			maxLineSize: 64,
+			want:        []spaceLog{{Quote: exactQuote}},
+		},
+		{
+			name:        "line one byte over the limit with newline is rejected",
+			input:       overLine + "\n",
+			maxLineSize: 64,
+			wantErr:     true,
+			errIs:       ErrLineTooLong,
+			errContains: "jsonl: line 1:",
+		},
+		{
+			name:        "line one byte over the limit without newline is rejected",
+			input:       overLine,
+			maxLineSize: 64,
+			wantErr:     true,
+			errIs:       ErrLineTooLong,
+			errContains: "jsonl: line 1:",
+		},
+		{
+			name:        "huge limit does not overflow into rejecting everything",
+			input:       longLine + "\n",
+			maxLineSize: math.MaxInt,
 			want:        []spaceLog{{ID: 1, Character: "HAL 9000", Quote: longQuote}},
 		},
 	}
