@@ -36,6 +36,12 @@ A package for working with byte sizes in Go. It provides support for parsing, fo
 
 See the [bytesize package documentation](bytesize/README.md).
 
+### 🤝 Contract
+
+A Go package declaring named interfaces for common method conventions that the standard library leaves implicit or unexported, like `IsZero() bool`. It enables readable compile-time conformance assertions and reflect-free generic checks.
+
+See the [contract package documentation](contract/README.md).
+
 ### ⏱️ Duration
 
 A Go package for handling time durations with JSON support. It wraps the standard `time.Duration` type to provide parsing and formatting capabilities for JSON serialization and deserialization.
