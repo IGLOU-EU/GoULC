@@ -13,9 +13,17 @@ A simple and fast wildcard pattern matching for Go. Regex is much more complex a
   - Any other character must match itself
 
 - **🛠️ API Variants:**
-  - `Match(pattern, s string) bool` — fastest, compares byte by byte, no allocation.
-  - `MatchFromByte(pattern, s []byte) bool` — same byte-wise semantics for `[]byte` inputs, skips the string conversion.
-  - `MatchByRune(pattern, s string) bool` — compares rune by rune; slower and the `[]rune` conversion allocates, but operators apply to whole Unicode code points.
+  - `Match(pattern, s string) bool`: fastest, compares byte by byte, no allocation.
+  - `MatchFromByte(pattern, s []byte) bool`: same byte-wise semantics for `[]byte` inputs, skips the string conversion.
+  - `MatchByRune(pattern, s string) bool`: compares rune by rune. Slower and the `[]rune` conversion allocates, but operators apply to whole Unicode code points.
+
+## 🧭 Semantics
+
+- Matching is **anchored**: the whole input is compared against the whole pattern, there is no substring search.
+- `?` is a true **zero or one**: both readings are explored, so `a?b` matches `ab` as well as `axb`, wherever the `?` sits.
+- `Match` and `MatchFromByte` operate on **bytes**: a multi-byte UTF-8 character counts as several bytes, so `.` does not match an emoji. `MatchByRune` operates on code points instead, and decodes invalid UTF-8 bytes as U+FFFD, which makes two distinct invalid bytes compare as equal.
+- Worst-case cost is **O(len(pattern) × len(s))** and adversarial inputs reach it (for instance `*` followed by a long literal tail). Bound both lengths before matching when the pattern and the input are both untrusted.
+- The byte path never allocates, except for patterns longer than 63 bytes that contain `?`.
 
 > ⚠️ **WARNING:** Unlike the GNU "libc", this library has no equivalent to `FNM_FILE_NAME`. For filename matching, use [`path/filepath`](https://pkg.go.dev/path/filepath#Match).
 
