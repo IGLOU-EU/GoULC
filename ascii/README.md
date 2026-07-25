@@ -9,10 +9,8 @@ A Go package for validating and checking ASCII string properties. It provides si
 - **📝 ASCII Validation:**
   - `Is` - Check for Standard ASCII (0-127) validation
   - `IsPrintable` - Check for printable ASCII characters (32-126, DEL excluded)
-  - `IsExtended` - Check for valid UTF-8 made only of code points up to 0xFF (Latin-1 representable text)
+  - `IsExtended` - Detect at least one extended ASCII byte (128-255)
   - `HasNil` - Detect null bytes
-
-Note that `IsExtended` iterates over runes while the other functions inspect raw bytes: a raw Latin-1 byte such as `"\xe9"` is rejected as invalid UTF-8, while its UTF-8 encoding `"\xc3\xa9"` is accepted.
 
 ## 📝 Examples
 

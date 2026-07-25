@@ -16,12 +16,10 @@ func main() {
 	fmt.Println(ascii.IsPrintable("Hello\n"))   // false
 	fmt.Println(ascii.IsPrintable("Hello\x7f")) // false
 
-	// Extended ASCII check, rune oriented: accepts valid UTF-8 whose code
-	// points fit in Latin-1, rejects raw Latin-1 bytes
-	fmt.Println(ascii.IsExtended("Pokémon"))     // true
-	fmt.Println(ascii.IsExtended("Hello 👋"))     // false
-	fmt.Println(ascii.IsExtended("caf\xc3\xa9")) // true, UTF-8 encoded é
-	fmt.Println(ascii.IsExtended("caf\xe9"))     // false, invalid UTF-8
+	// Extended ASCII detection: true when any byte is in the 128-255 range
+	fmt.Println(ascii.IsExtended("Hello"))   // false
+	fmt.Println(ascii.IsExtended("Pokémon")) // true
+	fmt.Println(ascii.IsExtended("caf\xe9")) // true
 
 	// Null byte detection
 	fmt.Println(ascii.HasNil("Hello\x00World")) // true
