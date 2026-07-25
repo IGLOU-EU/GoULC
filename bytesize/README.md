@@ -29,7 +29,7 @@ A Go package for handling byte sizes using IEC binary units (powers of 1024). It
   - Non-finite values (NaN, ±Inf) are rejected at parsing, `ToString` formats them as-is ("+Inf", "-Inf", "NaN")
 
 - **🔤 String Operations**:
-  - Parse size strings in format "NUMBER[OPTIONNAL UNIT]" (e.g., "42", "42.5MiB", "1.2GiB")
+  - Parse size strings in format "NUMBER[OPTIONAL UNIT]" (e.g., "42", "42.5MiB", "1.2GiB")
   - Automatic unit selection for human-readable output
   - Converts short unit forms to IEC standard (e.g., "M" to "MiB")
   - Rounds to 2 decimal places (except for bytes)
@@ -73,6 +73,10 @@ This package uses IEC binary units (powers of 1024) rather than SI decimal units
   - `ErrInvalidIEC`: invalid IEC unit symbol
   - `ErrIntegerOverflow`: value not representable as an int64
   - `ErrJSONInvalidType`: invalid JSON input type
+
+## 📝 Examples
+
+Complete usage examples can be found in the [examples](/examples/bytesize) directory: [basic](/examples/bytesize/basic) for parsing, formatting, and arithmetic, and [json](/examples/bytesize/json) for JSON integration.
 
 ## 📜 License
 

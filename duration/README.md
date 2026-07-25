@@ -25,6 +25,10 @@ A Go package for handling time durations with JSON support. It wraps the standar
   - Maintain all arithmetic and comparison capabilities
   - Preserve duration precision
 
+## ⚠️ Important Notes
+
+- Failures are reported through the exported sentinel errors `ErrBadDuration` (wraps any parse failure) and `ErrDurationInvalidType` (JSON value of an unsupported type), match them with `errors.Is`
+
 ## 📝 Examples
 
 Complete usage examples can be found in the [examples](/examples/duration) directory.
