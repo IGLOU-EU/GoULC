@@ -43,6 +43,8 @@ import (
 	"gitlab.com/iglou.eu/goulc/http/path"
 )
 
+// LoopRateDuration is the polling interval used by Close while waiting
+// for active requests to complete before releasing the client resources.
 const LoopRateDuration = 100 * time.Millisecond
 
 var (
