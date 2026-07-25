@@ -70,13 +70,13 @@ const (
 )
 
 // expiryMargin is the anticipation window applied to token expiry: a
-// token that close to expiring is refreshed early so it cannot be
-// rejected while a request is in flight. Tokens whose lifetime is
-// shorter than the margin are refreshed on every request.
+// token close to expiring is refreshed early so it cannot be rejected
+// while a request is in flight. Tokens whose lifetime is shorter than
+// the margin are refreshed on every request.
 const expiryMargin = 30 * time.Second
 
 // Verify ClientCredentials implements Authenticator interface
-var _ auth.Authenticator = &ClientCredentials{}
+var _ auth.Authenticator = (*ClientCredentials)(nil)
 
 // ClientCredentials implements the OAuth2 Client Credentials Authentication
 // scheme, managing access tokens and handling authentication requests.
