@@ -83,3 +83,15 @@ func TestEmptier(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeNow(t *testing.T) {
+	// time.Now must satisfy the type, so it models the standard clock.
+	var _ contract.TimeNow = time.Now
+
+	fixed := time.Unix(42, 0)
+	var clock contract.TimeNow = func() time.Time { return fixed }
+
+	if got := clock(); !got.Equal(fixed) {
+		t.Errorf("clock() = %v, want %v", got, fixed)
+	}
+}
