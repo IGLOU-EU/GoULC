@@ -169,3 +169,29 @@ type Response struct {
 	// that occurred during the request
 	Trace []Redirects
 }
+
+// Result returns the typed unmarshaler attached to the response, sparing
+// callers the repeated type assertion on BodyUml. It returns ErrNoResult
+// when the response carries no unmarshaled value of the requested type.
+//
+// Example:
+//
+//	resp, err := c.Do(http.MethodGet, nil, &MyResponseType{})
+//	if err != nil {
+//	    return err
+//	}
+//	data, err := client.Result[MyResponseType](resp)
+func Result[T any](r *Response) (*T, error) {
+	if r == nil {
+		return nil, ErrNoResult
+	}
+
+	// Widen to any first, a pointer to a type parameter cannot be
+	// asserted from the Unmarshaler interface directly
+	result, ok := any(r.BodyUml).(*T)
+	if !ok {
+		return nil, ErrNoResult
+	}
+
+	return result, nil
+}

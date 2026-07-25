@@ -56,7 +56,12 @@ func main() {
 		panic(err)
 	}
 
-	doomRes := res.BodyUml.(*DoomResponse)
+	// The client.Result helper replaces the manual type assertion on
+	// res.BodyUml and fails cleanly when the type does not match
+	doomRes, err := client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #02: Like you can see, my body was unmarshaled\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #03 Get request to /demons
@@ -68,7 +73,10 @@ func main() {
 		panic(err)
 	}
 
-	doomRes = res.BodyUml.(*DoomResponse)
+	doomRes, err = client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #03: Ho nooo, you are not authenticated, the door stay closed\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #04 Get request to /demons with authentication
@@ -87,7 +95,10 @@ func main() {
 		panic(err)
 	}
 
-	doomRes = res.BodyUml.(*DoomResponse)
+	doomRes, err = client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #04: And we are authenticated, the door open\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #05 Post request to /weapons

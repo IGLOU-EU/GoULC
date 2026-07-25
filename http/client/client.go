@@ -91,6 +91,11 @@ var (
 
 	// ErrEmptyMethod is returned when the HTTP method is empty
 	ErrEmptyMethod = errors.New("request method cannot be empty")
+
+	// ErrNoResult is returned by Result when the response carries no
+	// unmarshaled value of the requested type
+	ErrNoResult = errors.New(
+		"response has no unmarshaled result of the requested type")
 )
 
 // OptDefault defines secure default options for the client
@@ -275,7 +280,7 @@ func (c *Client) NewChild(childPath string) *Client {
 		}
 	}
 
-	if c.logger.Enabled(c.context, slog.LevelDebug) {
+	if c.debugEnabled() {
 		c.logger.Debug("new child client created",
 			"parent_url", c.URL.String(),
 			"child_url", child.URL.String())
@@ -305,7 +310,7 @@ func (c *Client) NewChildSegments(segments ...string) *Client {
 
 	child.URL = *child.URL.JoinPath(escaped...)
 
-	if c.logger.Enabled(c.context, slog.LevelDebug) {
+	if c.debugEnabled() {
 		c.logger.Debug("new child client created",
 			"parent_url", c.URL.String(),
 			"child_url", child.URL.String())
@@ -399,7 +404,7 @@ func (c *Client) copyLocked() *Client {
 // client.FlushHeader().FlushQuery()
 func (c *Client) FlushHeader() *Client {
 	c.mu.Lock()
-	if c.logger.Enabled(c.context, slog.LevelDebug) {
+	if c.debugEnabled() {
 		c.logger.Debug("flushing headers", "current_headers",
 			slices.Sorted(maps.Keys(c.Header)))
 	}
@@ -419,7 +424,7 @@ func (c *Client) FlushHeader() *Client {
 // client.FlushQuery().Do(http.MethodGet, nil, nil)
 func (c *Client) FlushQuery() *Client {
 	c.mu.Lock()
-	if c.logger.Enabled(c.context, slog.LevelDebug) {
+	if c.debugEnabled() {
 		c.logger.Debug("flushing query parameters", "current_query", c.Query)
 	}
 	c.Query = url.Values{}
@@ -495,7 +500,7 @@ func (c *Client) FollowRedirects(
 			}
 		}
 
-		if c.logger.Enabled(c.context, slog.LevelDebug) {
+		if c.debugEnabled() {
 			c.logger.Debug("follow redirection",
 				"from", prevURL, "to", req.URL.String(),
 				"redirect_count", nb, "max_redirect", c.Options.MaxRedirect)
@@ -622,7 +627,7 @@ func (main *Client) DoWithMarshal(
 		return nil, err
 	}
 
-	if main.logger.Enabled(main.context, slog.LevelDebug) {
+	if main.debugEnabled() {
 		main.logger.Debug("http client marshalling body",
 			"marshaller", body.Name(),
 			"content_type", body.ContentType())
@@ -638,11 +643,11 @@ func (main *Client) DoWithMarshal(
 //
 // Example:
 //
-//	resp, err := client.Do(http.MethodGet, nil, &MyResponseType{})
+//	resp, err := c.Do(http.MethodGet, nil, &MyResponseType{})
 //	if err != nil {
 //	    return err
 //	}
-//	// Use type assertion like resp.BodyUml.(*MyResponseType) to access data
+//	// Use client.Result[MyResponseType](resp) to access the typed data
 //
 // Parameters:
 //   - method: The HTTP method to use for the request.
@@ -688,68 +693,9 @@ func (main *Client) doRequest(
 		return nil, errors.Join(ErrInvalidMethod, ErrEmptyMethod)
 	}
 
-	// Debug arguments below allocate, skip them when the level is off
-	debug := c.logger.Enabled(c.context, slog.LevelDebug)
-
-	// Add query to URL
-	if len(c.Query) > 0 {
-		if debug {
-			c.logger.Debug("encoding query parameters", "query", c.Query)
-		}
-		c.URL.RawQuery = c.Query.Encode()
-	}
-
-	// Create request with context for cancellation/timeout support
-	var err error
-	var req *http.Request
-
-	if body != nil {
-		req, err = http.NewRequestWithContext(c.context,
-			method, c.URL.String(), bytes.NewReader(body))
-	} else {
-		req, err = http.NewRequestWithContext(c.context,
-			method, c.URL.String(), nil)
-	}
-
+	req, err := c.buildRequest(method, contentType, body)
 	if err != nil {
 		return nil, err
-	}
-
-	// Copy all headers from client to request
-	// Using maps.Copy ensures a proper deep copy of the headers
-	maps.Copy(req.Header, c.Header)
-
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-
-	if body != nil && req.Header.Get("Content-Type") == "" {
-		if debug {
-			c.logger.Debug("setting the default content type",
-				"content_type", "application/json",
-				"body_size", len(body))
-		}
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	// Handle authentication if configured
-	// Some auth methods might need to read the body to generate the auth header
-	// (e.g., for signing the request)
-	if c.Auth != nil {
-		if debug {
-			c.logger.Debug("adding authentication header",
-				"auth_name", c.Auth.Name())
-		}
-
-		if err := c.Auth.Update(); err != nil {
-			return nil, err
-		}
-
-		name, value, err := c.Auth.Header(method, req.URL, body)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set(name, value)
 	}
 
 	// Initialize redirects tracking
@@ -761,7 +707,7 @@ func (main *Client) doRequest(
 	httpClient.Timeout = c.Options.Timeout
 	httpClient.CheckRedirect = c.FollowRedirects(&redirectsVia)
 
-	if debug {
+	if c.debugEnabled() {
 		c.logger.Debug("executing HTTP request",
 			"method", req.Method,
 			"url", req.URL.String(),
@@ -795,7 +741,7 @@ func (main *Client) doRequest(
 		Trace:        redirectsVia,
 	}
 
-	if debug {
+	if c.debugEnabled() {
 		c.logger.Debug("HTTP request",
 			"success", resp.Success,
 			"method", req.Method,
@@ -810,6 +756,88 @@ func (main *Client) doRequest(
 		return resp, nil
 	}
 
+	if err := c.readBody(httpRes, resp, respUml); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// buildRequest assembles the outgoing request from the snapshot state:
+// URL query, headers, content type and authentication.
+func (c *Client) buildRequest(
+	method, contentType string, body []byte,
+) (*http.Request, error) {
+	debug := c.debugEnabled()
+
+	// Add query to URL
+	if len(c.Query) > 0 {
+		if debug {
+			c.logger.Debug("encoding query parameters", "query", c.Query)
+		}
+		c.URL.RawQuery = c.Query.Encode()
+	}
+
+	// Create request with context for cancellation/timeout support,
+	// keeping a nil reader interface when there is no body
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(c.context,
+		method, c.URL.String(), bodyReader)
+	if err != nil {
+		return nil, err
+	}
+
+	// Copy all headers from client to request
+	// Using maps.Copy ensures a proper deep copy of the headers
+	maps.Copy(req.Header, c.Header)
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	if body != nil && req.Header.Get("Content-Type") == "" {
+		if debug {
+			c.logger.Debug("setting the default content type",
+				"content_type", "application/json",
+				"body_size", len(body))
+		}
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Handle authentication if configured
+	// Some auth methods might need to read the body to generate the auth
+	// header (e.g., for signing the request)
+	if c.Auth != nil {
+		if debug {
+			c.logger.Debug("adding authentication header",
+				"auth_name", c.Auth.Name())
+		}
+
+		if err := c.Auth.Update(); err != nil {
+			return nil, err
+		}
+
+		name, value, err := c.Auth.Header(method, req.URL, body)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set(name, value)
+	}
+
+	return req, nil
+}
+
+// readBody reads the response body under the configured size cap and
+// runs the optional unmarshaler.
+func (c *Client) readBody(
+	httpRes *http.Response, resp *Response, respUml Unmarshaler,
+) error {
+	debug := c.debugEnabled()
+
 	if debug {
 		c.logger.Debug("reading response body",
 			"status_code", resp.StatusCode,
@@ -823,14 +851,15 @@ func (main *Client) doRequest(
 		bodyReader = io.LimitReader(httpRes.Body, limit+1)
 	}
 
+	var err error
 	resp.Body, err = io.ReadAll(bodyReader)
 	if err != nil {
-		return nil, errors.Join(ErrRequestFailed, err)
+		return errors.Join(ErrRequestFailed, err)
 	}
 
 	if limit := c.Options.MaxBodySize; limit > 0 &&
 		int64(len(resp.Body)) > limit {
-		return nil, errors.Join(ErrBodyTooLarge,
+		return errors.Join(ErrBodyTooLarge,
 			errors.New("limit is "+strconv.FormatInt(limit, 10)+" bytes"))
 	}
 
@@ -838,22 +867,30 @@ func (main *Client) doRequest(
 	// This allows automatic parsing of JSON/XML/etc into structs
 	// The unmarshaler has access to both the status code and body
 	// to handle different response formats based on status
-	if respUml != nil {
-		if debug {
-			c.logger.Debug("unmarshaling response body",
-				"unmarshaler", respUml.Name(),
-				"body_size", len(resp.Body))
-		}
-
-		resp.BodyUml = respUml
-		if err := resp.BodyUml.Unmarshal(
-			resp.StatusCode, resp.Header, resp.Body,
-		); err != nil {
-			return nil, errors.Join(ErrRequestFailed, err)
-		}
+	if respUml == nil {
+		return nil
 	}
 
-	return resp, nil
+	if debug {
+		c.logger.Debug("unmarshaling response body",
+			"unmarshaler", respUml.Name(),
+			"body_size", len(resp.Body))
+	}
+
+	resp.BodyUml = respUml
+	if err := resp.BodyUml.Unmarshal(
+		resp.StatusCode, resp.Header, resp.Body,
+	); err != nil {
+		return errors.Join(ErrRequestFailed, err)
+	}
+
+	return nil
+}
+
+// debugEnabled reports whether debug records are collected, letting hot
+// paths skip building their log arguments.
+func (c *Client) debugEnabled() bool {
+	return c.logger.Enabled(c.context, slog.LevelDebug)
 }
 
 // IsClosed checks if the client is closed.
