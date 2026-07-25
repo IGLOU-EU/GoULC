@@ -60,6 +60,33 @@ func TestClose_StopsWaitPoller(t *testing.T) {
 	}
 }
 
+// TestRegisterChild_ClosedParent pins the no-orphan guarantee: a child
+// built before the parent closed must not be published afterward, and
+// its context must be released.
+func TestRegisterChild_ClosedParent(t *testing.T) {
+	c, err := New(context.Background(), "https://vault.example",
+		nil, nil, discardLogger())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	child := c.newChild()
+	if child == nil {
+		t.Fatal("newChild() = nil, want a child")
+	}
+
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if c.registerChild(child) {
+		t.Error("registerChild() on a closed parent = true, want false")
+	}
+	if child.context.Err() == nil {
+		t.Error("registerChild() must cancel the rejected child context")
+	}
+}
+
 // TestDo_DoesNotRegisterPerRequestCloser guards against the per-request
 // closer retention: request snapshots must not be registered on the
 // parent, only explicit clones are.
