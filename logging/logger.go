@@ -73,10 +73,11 @@ func New(basePath string, cfg *model.Config) (*slog.Logger, error) {
 // The basePath is used for source code reference, to get the file and line
 // number of the caller without a full path output.
 //
-// If writer is nil, the default writer will be used. It return an error in the
-// case of writer.Out is nil and use writer.Out as writer.Err if it is nil.
+// If writer is nil, the default writer will be used. It returns an error
+// when writer.Out is nil, and uses writer.Out as writer.Err when writer.Err
+// is nil.
 //
-// The cfg use the default configuration if nil
+// The cfg falls back to the default configuration if nil.
 func NewWithWriter(
 	basePath string, writer *model.Writer, cfg *model.Config,
 ) (*slog.Logger, error) {
