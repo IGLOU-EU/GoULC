@@ -1,8 +1,12 @@
 image: golang:latest
 
+include:
+  - local: wildcard/.gitlab-ci.yml
+
 stages:
   - linter
   - testing
+  - wildcard:benchmark
 
 linter:
   stage: linter
