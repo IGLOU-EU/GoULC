@@ -15,6 +15,7 @@ A Go package providing a flexible and thread-safe HTTP client with built-in supp
 - **🛠️ Client Features:**
   - Thread-safe operations
   - Parent-child client hierarchy
+  - Safe child paths from literal segments (`NewChildSegments`)
   - Configurable redirects
   - Custom header management
   - Query parameter handling

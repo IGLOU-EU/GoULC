@@ -242,10 +242,17 @@ func New(
 // NewChild creates a new Client that inherits the parent's configuration
 // but operates independently. The new client is isolated from the parent,
 // allowing for concurrent modifications without affecting the parent client.
+// It returns nil if the parent is already closed.
 //
 // The childPath parameter is appended to the parent's URL path. If empty,
 // the parent's path remains unchanged. The path is automatically formatted
 // to ensure proper URL structure.
+//
+// The path is appended as raw, already decoded text: a segment that
+// contains "/" or ".." reshapes the resulting URL (".." is resolved by
+// the formatting), and "%" is re-encoded when the URL is serialized, so
+// pre-escaped input gets double encoded. Use NewChildSegments to inject
+// external values safely.
 //
 // Example:
 //
@@ -254,6 +261,9 @@ func New(
 // // child URL will be https://api.example.com/v1/users
 func (c *Client) NewChild(childPath string) *Client {
 	child := c.Clone()
+	if child == nil {
+		return nil
+	}
 
 	if childPath != "" {
 		newPath := path.Format(childPath)
@@ -269,6 +279,49 @@ func (c *Client) NewChild(childPath string) *Client {
 		"parent_url", c.URL.String(),
 		"child_url", child.URL.String())
 	return child
+}
+
+// NewChildSegments creates a child Client like NewChild, but treats
+// every argument as one literal path segment. Each segment is
+// percent-encoded, so values containing "/", "..", "%" or any other
+// metacharacter cannot restructure the resulting URL. Empty segments
+// are dropped. It returns nil if the parent is already closed.
+//
+// Use it whenever a path element comes from external input:
+//
+// child := parent.NewChildSegments("projects", projectID, "tasks", taskID)
+func (c *Client) NewChildSegments(segments ...string) *Client {
+	child := c.Clone()
+	if child == nil || len(segments) == 0 {
+		return child
+	}
+
+	escaped := make([]string, len(segments))
+	for i, segment := range segments {
+		escaped[i] = escapeSegment(segment)
+	}
+
+	child.URL = *child.URL.JoinPath(escaped...)
+
+	c.logger.Debug("new child client created",
+		"parent_url", c.URL.String(),
+		"child_url", child.URL.String())
+	return child
+}
+
+// escapeSegment keeps a path segment literal once joined. PathEscape
+// covers every metacharacter but leaves dots alone, and the URL path
+// join would resolve "." and ".." segments away, so those two are
+// force-encoded.
+func escapeSegment(segment string) string {
+	switch segment {
+	case ".":
+		return "%2E"
+	case "..":
+		return "%2E%2E"
+	default:
+		return url.PathEscape(segment)
+	}
 }
 
 // Clone creates and returns a new Client that is a copy of the original.

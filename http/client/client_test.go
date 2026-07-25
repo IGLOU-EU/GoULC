@@ -270,6 +270,97 @@ func TestClient_NewChild(t *testing.T) {
 	}
 }
 
+func TestClient_NewChildSegments(t *testing.T) {
+	const base = "https://vault13.wasteland/api"
+
+	parent, err := client.New(context.Background(), base, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create parent client: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		give []string
+		want string
+	}{
+		{
+			name: "single literal segment",
+			give: []string{"users"},
+			want: base + "/users",
+		},
+		{
+			name: "segment containing a slash stays one segment",
+			give: []string{"a/b", "tasks"},
+			want: base + "/a%2Fb/tasks",
+		},
+		{
+			name: "parent dots stay a literal segment",
+			give: []string{"..", "x"},
+			want: base + "/%2E%2E/x",
+		},
+		{
+			name: "single dot stays a literal segment",
+			give: []string{"."},
+			want: base + "/%2E",
+		},
+		{
+			name: "pre-escaped input is not double decoded",
+			give: []string{"x%2Fy"},
+			want: base + "/x%252Fy",
+		},
+		{
+			name: "space and unicode are escaped",
+			give: []string{"café corner"},
+			want: base + "/caf%C3%A9%20corner",
+		},
+		{
+			name: "empty segments are dropped",
+			give: []string{"", "v1", ""},
+			want: base + "/v1",
+		},
+		{
+			name: "no segment keeps the parent path",
+			give: nil,
+			want: base,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			child := parent.NewChildSegments(tt.give...)
+			if child == nil {
+				t.Fatal("NewChildSegments() = nil, want a child")
+			}
+			if got := child.URL.String(); got != tt.want {
+				t.Errorf("NewChildSegments(%q) URL = %q, want %q",
+					tt.give, got, tt.want)
+			}
+		})
+	}
+
+	if err := parent.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	if child := parent.NewChildSegments("users"); child != nil {
+		t.Errorf("NewChildSegments() on closed client = %v, want nil", child)
+	}
+}
+
+func TestClient_NewChild_ClosedParent(t *testing.T) {
+	parent, err := client.New(context.Background(),
+		"https://vault13.wasteland", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create parent client: %v", err)
+	}
+
+	if err := parent.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	if child := parent.NewChild("/v1"); child != nil {
+		t.Errorf("NewChild() on closed client = %v, want nil", child)
+	}
+}
+
 //gocyclo:ignore
 func TestClient_Do(t *testing.T) {
 	// Create test server
