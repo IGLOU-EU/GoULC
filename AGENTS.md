@@ -24,6 +24,7 @@ While you cannot create new packages, you are highly encouraged to help with the
 * **Performance Analysis:** Execute or analyze heap analysis and profiling data to propose concrete code optimizations.
 * **Documentation:** Write and improve documentation (README, package docs, code comments) to explain functionality clearly. All documentation must be reviewed and validated by a human before submission.
 * **Commit Message Drafting:** AI assistants are permitted to draft commit messages **in English**, strictly following the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) format. The scope must be the name of the package being modified. Example: `feat(jsonl): add streaming parser support`.
+* **AI Co-Authorship:** Every commit produced with AI assistance must carry a `Co-Authored-By` trailer identifying the assistant that authored the change, placed **before** the `Signed-off-by` line so the sign-off stays last. Example: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 By following these rules, we ensure that the GoULC codebase remains human-driven, simple, and reliable, while effectively leveraging AI for quality assurance, testing, and optimization.
 

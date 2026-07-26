@@ -31,6 +31,8 @@ type intHider struct {
 	v int
 }
 
+var _ Hider = intHider{}
+
 func (_ intHider) String() string  { return obfuscated }
 func (i intHider) IsEmpty() bool   { return i.v == 0 }
 func (_ intHider) HashMD5() string { return "" }
@@ -106,11 +108,20 @@ func TestValueGeneric(t *testing.T) {
 			t.Errorf("Value[string] on intHider = %q, want \"\" (zero value)", got)
 		}
 	})
-}
 
-// TestHiderInterfaceCompliance verifies that the canonical hided types
-// satisfy the Hider interface contract at compile time.
-func TestHiderInterfaceCompliance(t *testing.T) {
-	var _ Hider = String{}
-	var _ Hider = intHider{}
+	// The documented contract is "no panic", so a nil Hider must yield the
+	// zero value of T instead of a nil interface dereference.
+	t.Run("nil-hider-returns-zero-string", func(t *testing.T) {
+		got := Value[string](nil)
+		if got != "" {
+			t.Errorf("Value[string](nil) = %q, want \"\" (zero value)", got)
+		}
+	})
+
+	t.Run("nil-hider-returns-zero-int", func(t *testing.T) {
+		got := Value[int](nil)
+		if got != 0 {
+			t.Errorf("Value[int](nil) = %d, want 0 (zero value)", got)
+		}
+	})
 }

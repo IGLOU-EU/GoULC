@@ -4,7 +4,7 @@ Thank you for your interest in contributing to GoULC! We welcome contributions f
 
 ## Code Licensing 🔒
 
-- All contributions must be made under the GNU General Public License v3.0 (GPLv3).
+- All contributions must be made under the GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later).
 
 ## Commit Guidelines 📝
 
@@ -20,7 +20,7 @@ Before submitting a pull request, please ensure that:
 - The main README is updated with an entry for new package addition.
 - No external libraries are used, except standard library or those already part of GoULC.
 - For functionality that requires external libraries, conditional builds (e.g., using `//go:build`) must be used to isolate extra dependencies.
-- An example demonstrating the usage of the new feature is included in the `example` folder.
+- An example demonstrating the usage of the new feature is included in the `examples` folder.
 
 ## AI / LLM Usage 🤖
 

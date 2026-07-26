@@ -25,16 +25,18 @@ package ascii
 const (
 	nilByte = 0x00
 
+	// Printable ASCII stops at tilde (0x7e), DEL (0x7f) is a control
+	// character.
 	printableBegin = 0x20
-	printableEnd   = 0x80
+	printableMax   = 0x7e
 
-	extended = 0xff
+	asciiMax = 0x7f
 )
 
 // Is reports whether s contains only ASCII characters (0-127).
 func Is(s string) bool {
 	for i := 0; i < len(s); i++ {
-		if s[i]&printableEnd != 0 {
+		if s[i] > asciiMax {
 			return false
 		}
 	}
@@ -43,10 +45,10 @@ func Is(s string) bool {
 }
 
 // IsPrintable reports whether s contains only printable ASCII characters
-// (32-127).
+// (32-126).
 func IsPrintable(s string) bool {
 	for i := 0; i < len(s); i++ {
-		if s[i] < printableBegin || s[i]&printableEnd != 0 {
+		if s[i] < printableBegin || s[i] > printableMax {
 			return false
 		}
 	}
@@ -54,15 +56,18 @@ func IsPrintable(s string) bool {
 	return true
 }
 
-// IsExtended reports whether s contains only extended ASCII characters (0-255).
+// IsExtended reports whether s contains at least one extended ASCII byte
+// (128-255). Unlike Is and IsPrintable, which validate that every byte stays
+// within a range, IsExtended detects the presence of a single byte outside
+// the standard 7-bit ASCII set.
 func IsExtended(s string) bool {
-	for _, r := range s {
-		if r > extended {
-			return false
+	for i := 0; i < len(s); i++ {
+		if s[i] > asciiMax {
+			return true
 		}
 	}
 
-	return true
+	return false
 }
 
 // HasNil reports whether s contains a null byte.

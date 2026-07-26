@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"gitlab.com/iglou.eu/goulc/logging"
-	"gitlab.com/iglou.eu/goulc/logging/model"
 )
 
 func main() {
@@ -22,14 +21,14 @@ func main() {
 
 	defer logFile.Close()
 
-	w := &model.Writer{
+	w := &logging.Writer{
 		Out: logFile,
 	}
 
 	// Create configuration.
 	// Other useful fields include TimeFormat (custom timestamp layout) and
 	// ForceSyslog (prepend syslog severity prefixes like <6>).
-	cfg := &model.Config{
+	cfg := &logging.Config{
 		Level:     "DEBUG",
 		Colored:   false,
 		AddSource: true,

@@ -28,16 +28,16 @@ import (
 )
 
 func main() {
-	// 1. Match — fastest path, byte by byte, no allocation
+	// 1. Match: fastest path, byte by byte, no allocation.
 	str := "daaadabadmanda"
 	pattern := "?a*da*d.?*"
 	fmt.Printf("Match(%q, %q) = %v\n", pattern, str, wildcard.Match(pattern, str))
 
-	// 2. MatchFromByte — same byte semantics for []byte inputs
+	// 2. MatchFromByte: same byte semantics for []byte inputs.
 	fmt.Printf("MatchFromByte = %v\n",
 		wildcard.MatchFromByte([]byte(pattern), []byte(str)))
 
-	// 3. MatchByRune — slower, but operators apply to whole code points.
+	// 3. MatchByRune: slower, but operators apply to whole code points.
 	// Multi-byte UTF-8 (here, the emoji) is matched as a single rune.
 	emojiStr := "Hello 🌍 World"
 	emojiPattern := "Hello ? World"
@@ -45,20 +45,23 @@ func main() {
 		emojiPattern, emojiStr,
 		wildcard.MatchByRune(emojiPattern, emojiStr))
 
-	// With Match (byte-wise), the same pattern fails: '?' matches a single
-	// byte and the emoji is 4 bytes long.
+	// With Match (byte-wise), the same pattern fails: '?' matches at most
+	// a single byte and the emoji is 4 bytes long.
 	fmt.Printf("Match(%q, %q)      = %v\n",
 		emojiPattern, emojiStr,
 		wildcard.Match(emojiPattern, emojiStr))
 
-	// 4. Operators recap
+	// 4. Operators recap.
 	fmt.Println()
 	fmt.Println("Operators:")
-	fmt.Printf("  '*' zero or more — Match(%q, %q) = %v\n",
+	fmt.Printf("  '*' zero or more: Match(%q, %q) = %v\n",
 		"a*z", "abcz", wildcard.Match("a*z", "abcz"))
-	fmt.Printf("  '?' zero or one  — Match(%q, %q) = %v, Match(%q, %q) = %v\n",
-		"?at", "cat", wildcard.Match("?at", "cat"),
-		"?at", "at", wildcard.Match("?at", "at"))
-	fmt.Printf("  '.' exactly one  — Match(%q, %q) = %v\n",
+
+	// '?' is a true zero-or-one, wherever it sits in the pattern.
+	fmt.Printf("  '?' zero or one : Match(%q, %q) = %v, Match(%q, %q) = %v\n",
+		"a?b", "axb", wildcard.Match("a?b", "axb"),
+		"a?b", "ab", wildcard.Match("a?b", "ab"))
+
+	fmt.Printf("  '.' exactly one : Match(%q, %q) = %v\n",
 		"f.o", "foo", wildcard.Match("f.o", "foo"))
 }

@@ -1,6 +1,9 @@
 package bytesize_test
 
 import (
+	"errors"
+	"math"
+	"strconv"
 	"testing"
 
 	"gitlab.com/iglou.eu/goulc/bytesize"
@@ -25,7 +28,7 @@ func Test_Parse(t *testing.T) {
 		wInt    int64
 		wFloat  float64
 		wString string
-		wErr    string
+		wErr    error
 	}{
 		{
 			name:    "empty string",
@@ -92,14 +95,75 @@ func Test_Parse(t *testing.T) {
 			wString: "42MiB",
 		},
 		{
+			name:    "float gibi value",
+			input:   "1.5GiB",
+			wInt:    1536 * bytesize.Mebi,
+			wFloat:  float64(1536 * bytesize.Mebi),
+			wString: "1.5GiB",
+		},
+		{
+			name:    "negative short kibi value",
+			input:   "-5KiB",
+			wInt:    -5 * bytesize.Kibi,
+			wFloat:  float64(-5 * bytesize.Kibi),
+			wString: "-5KiB",
+		},
+		{
+			name:    "scientific notation uppercase",
+			input:   "1E5",
+			wInt:    100000,
+			wFloat:  100000,
+			wString: "97.66KiB",
+		},
+		{
+			name:    "scientific notation lowercase",
+			input:   "1e5",
+			wInt:    100000,
+			wFloat:  100000,
+			wString: "97.66KiB",
+		},
+		{
+			name:    "scientific notation with unit",
+			input:   "1E3KiB",
+			wInt:    1000 * bytesize.Kibi,
+			wFloat:  float64(1000 * bytesize.Kibi),
+			wString: "1000KiB",
+		},
+		{
+			name:    "byte unit value",
+			input:   "1B",
+			wInt:    1,
+			wFloat:  1,
+			wString: "1B",
+		},
+		{
+			name:    "hundred pebibytes",
+			input:   "100PiB",
+			wInt:    100 * bytesize.Pebi,
+			wFloat:  float64(100 * bytesize.Pebi),
+			wString: "100PiB",
+		},
+		{
+			name:    "near max value",
+			input:   "8191PiB",
+			wInt:    8191 * bytesize.Pebi,
+			wFloat:  float64(8191 * bytesize.Pebi),
+			wString: "8191PiB",
+		},
+		{
 			name:  "symbol without value",
 			input: "PiB",
 			wErr:  bytesize.ErrNoValue,
 		},
 		{
+			name:  "byte symbol without value",
+			input: "B",
+			wErr:  bytesize.ErrNoValue,
+		},
+		{
 			name:  "invalid numeric value",
 			input: "a Byte",
-			wErr:  `strconv.ParseFloat: parsing "a Byte": invalid syntax`,
+			wErr:  strconv.ErrSyntax,
 		},
 		{
 			name:  "invalid unit",
@@ -111,14 +175,48 @@ func Test_Parse(t *testing.T) {
 			input: "10000P",
 			wErr:  bytesize.ErrIntegerOverflow,
 		},
+		{
+			name:  "too big unitless value",
+			input: "1e20",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "too big scientific uppercase value",
+			input: "1E20",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "too small negative value with unit",
+			input: "-9000PiB",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "positive infinity",
+			input: "inf",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "negative infinity with unit",
+			input: "-infKiB",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "not a number",
+			input: "nan",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:  "not a number with unit",
+			input: "nanKiB",
+			wErr:  bytesize.ErrIntegerOverflow,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gInt, gFloat, gString, err := bytesize.Parse(tt.input)
 
-			if (err != nil) != (tt.wErr != "") ||
-				(err != nil && err.Error() != tt.wErr) {
+			if !errors.Is(err, tt.wErr) {
 				t.Errorf("Error does not match = %v, expected = %v", err, tt.wErr)
 				return
 			}
@@ -160,6 +258,21 @@ func Test_ToString(t *testing.T) {
 			name:  "exbi value",
 			input: float64(4200 * bytesize.Pebi),
 			want:  "4200PiB",
+		},
+		{
+			name:  "positive infinity",
+			input: math.Inf(1),
+			want:  "+Inf",
+		},
+		{
+			name:  "negative infinity",
+			input: math.Inf(-1),
+			want:  "-Inf",
+		},
+		{
+			name:  "not a number",
+			input: math.NaN(),
+			want:  "NaN",
 		},
 	}
 
@@ -207,6 +320,53 @@ func Test_New(t *testing.T) {
 	}
 }
 
+func TestByteSize_IsZero(t *testing.T) {
+	half, err := bytesize.New("0.5")
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		give bytesize.Size
+		want bool
+	}{
+		{
+			name: "zero value",
+			give: bytesize.Size{},
+			want: true,
+		},
+		{
+			name: "new int zero",
+			give: bytesize.NewInt(0),
+			want: true,
+		},
+		{
+			name: "positive value",
+			give: bytesize.NewInt(1),
+			want: false,
+		},
+		{
+			name: "negative value",
+			give: bytesize.NewInt(-1),
+			want: false,
+		},
+		{
+			name: "fractional bytes only",
+			give: half,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.give.IsZero(); got != tt.want {
+				t.Errorf("Result does not match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func Test_Add(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -214,8 +374,8 @@ func Test_Add(t *testing.T) {
 		inSTR  string
 		inINT  int64
 		want   string
-		errSTR string
-		errINT string
+		errSTR error
+		errINT error
 	}{
 		{
 			name:  "zero value",
@@ -260,6 +420,22 @@ func Test_Add(t *testing.T) {
 			errSTR: bytesize.ErrIntegerOverflow,
 			errINT: bytesize.ErrIntegerOverflow,
 		},
+		{
+			name:   "add too small negative value",
+			base:   "-8000PiB",
+			inSTR:  "-4200PiB",
+			inINT:  -4200 * bytesize.Pebi,
+			errSTR: bytesize.ErrIntegerOverflow,
+			errINT: bytesize.ErrIntegerOverflow,
+		},
+		{
+			name:   "add invalid value",
+			base:   "42MiB",
+			inSTR:  "hoho!",
+			inINT:  0,
+			want:   "42MiB",
+			errSTR: strconv.ErrSyntax,
+		},
 	}
 
 	for _, tt := range tests {
@@ -268,13 +444,12 @@ func Test_Add(t *testing.T) {
 			main, _ := bytesize.New(tt.base)
 
 			err := main.Add(tt.inSTR)
-			if (err != nil) != (tt.errSTR != "") ||
-				(err != nil && err.Error() != tt.errSTR) {
+			if !errors.Is(err, tt.errSTR) {
 				t.Errorf("STR Add error does not match = %v, expected = %v", err, tt.errSTR)
 				return
 			}
 
-			if (tt.errSTR == "") && main.String() != tt.want {
+			if tt.errSTR == nil && main.String() != tt.want {
 				t.Errorf("STR Add result does not match = %v, expected = %v", main.String(), tt.want)
 			}
 
@@ -282,13 +457,12 @@ func Test_Add(t *testing.T) {
 			main, _ = bytesize.New(tt.base)
 
 			err = main.AddInt(tt.inINT)
-			if (err != nil) != (tt.errINT != "") ||
-				(err != nil && err.Error() != tt.errINT) {
+			if !errors.Is(err, tt.errINT) {
 				t.Errorf("INT Add error does not match = %v, expected = %v", err, tt.errINT)
 				return
 			}
 
-			if (tt.errINT == "") && main.String() != tt.want {
+			if tt.errINT == nil && main.String() != tt.want {
 				t.Errorf("INT Add result does not match = %v, expected = %v", main.String(), tt.want)
 			}
 		})

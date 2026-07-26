@@ -63,6 +63,19 @@ func TestConfig_JSONTags(t *testing.T) {
 	}
 }
 
+func TestConfig_OmitZero(t *testing.T) {
+	var cfg Config
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	if got, want := string(data), "{}"; got != want {
+		t.Errorf("zero Config marshals to %s, want %s", got, want)
+	}
+}
+
 func TestConfig_ZeroValue(t *testing.T) {
 	var cfg Config
 

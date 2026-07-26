@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +156,58 @@ func TestIsEmpty(t *testing.T) {
 	})
 }
 
+// TestIsZero verifies that IsZero mirrors IsEmpty, which unlocks the json
+// ",omitzero" tag option on String fields.
+func TestIsZero(t *testing.T) {
+	tests := []struct {
+		name string
+		give string
+		want bool
+	}{
+		{"empty", "", true},
+		{"non-empty", "secret", false},
+		{"whitespace-is-not-zero", " ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewString(tt.give).IsZero(); got != tt.want {
+				t.Errorf("IsZero() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOmitZero verifies the ",omitzero" interaction: omitzero is evaluated
+// BEFORE MarshalJSON, so an empty secret is omitted from the output instead
+// of appearing as a spurious "***", while a non-empty one still obfuscates.
+func TestOmitZero(t *testing.T) {
+	type Config struct {
+		Password String `json:"password,omitzero"`
+	}
+
+	t.Run("empty-secret-omitted", func(t *testing.T) {
+		data, err := json.Marshal(Config{})
+		if err != nil {
+			t.Fatalf("json.Marshal() error: %v", err)
+		}
+		if got := string(data); got != "{}" {
+			t.Errorf("json.Marshal(empty) = %s, want {}", got)
+		}
+	})
+
+	t.Run("non-empty-secret-obfuscated", func(t *testing.T) {
+		data, err := json.Marshal(Config{Password: NewString("secret")})
+		if err != nil {
+			t.Fatalf("json.Marshal() error: %v", err)
+		}
+		want := `{"password":"***"}`
+		if got := string(data); got != want {
+			t.Errorf("json.Marshal(non-empty) = %s, want %s", got, want)
+		}
+	})
+}
+
 // TestHashMD5 verifies that HashMD5 returns the correct MD5 hex digest.
 func TestHashMD5(t *testing.T) {
 	tests := []struct {
@@ -186,6 +239,27 @@ func TestValue(t *testing.T) {
 	got := s.Value()
 	if got != input {
 		t.Errorf("Value() = %q, want %q", got, input)
+	}
+}
+
+// TestReveal verifies that Reveal() returns the underlying plaintext as a
+// typed string, mirroring Value() for call sites that statically hold a String.
+func TestReveal(t *testing.T) {
+	tests := []struct {
+		name string
+		give string
+	}{
+		{"non-empty", "the-real-secret"},
+		{"empty", ""},
+		{"unicode", "héllo wörld 🔑"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewString(tt.give).Reveal(); got != tt.give {
+				t.Errorf("Reveal() = %q, want %q", got, tt.give)
+			}
+		})
 	}
 }
 
@@ -245,6 +319,68 @@ func TestMarshalText(t *testing.T) {
 
 	if string(data) != obfuscated {
 		t.Errorf("MarshalText() = %q, want %q", string(data), obfuscated)
+	}
+}
+
+// TestMarshalUnmarshalRoundTripIsLossy verifies that the JSON round-trip is
+// lossy by design: MarshalJSON emits the placeholder, so unmarshaling its
+// own output stores "***" instead of the original secret.
+func TestMarshalUnmarshalRoundTripIsLossy(t *testing.T) {
+	orig := NewString("the-real-secret")
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("json.Marshal() error: %v", err)
+	}
+
+	var back String
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
+
+	if got := back.Reveal(); got != obfuscated {
+		t.Errorf("round-tripped value = %q, want %q (lossy by design)", got, obfuscated)
+	}
+}
+
+// TestFormatPointer verifies that a *String does not leak through any fmt
+// verb: value-receiver methods promote to the pointer, so Format applies.
+func TestFormatPointer(t *testing.T) {
+	s := NewString("ptr-secret")
+	p := &s
+
+	verbs := []string{"%v", "%s", "%+v", "%#v", "%q"}
+	for _, verb := range verbs {
+		t.Run(verb, func(t *testing.T) {
+			got := fmt.Sprintf(verb, p)
+			if got != obfuscated {
+				t.Errorf("fmt.Sprintf(%q, &s) = %q, want %q", verb, got, obfuscated)
+			}
+		})
+	}
+}
+
+// TestFormatNested verifies that a String nested in a struct, by value or by
+// pointer, does not leak through %v, %+v, or %#v.
+func TestFormatNested(t *testing.T) {
+	type wrap struct {
+		Secret String
+		Ptr    *String
+	}
+
+	s := NewString("nested-secret")
+	w := wrap{Secret: s, Ptr: &s}
+
+	for _, verb := range []string{"%v", "%+v", "%#v"} {
+		t.Run(verb, func(t *testing.T) {
+			got := fmt.Sprintf(verb, w)
+			if strings.Contains(got, "nested-secret") {
+				t.Errorf("fmt.Sprintf(%q, wrap) = %q, leaks the secret", verb, got)
+			}
+			if !strings.Contains(got, obfuscated) {
+				t.Errorf("fmt.Sprintf(%q, wrap) = %q, want it to contain %q", verb, got, obfuscated)
+			}
+		})
 	}
 }
 

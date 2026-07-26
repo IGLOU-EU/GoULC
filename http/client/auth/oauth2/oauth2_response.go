@@ -26,7 +26,7 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/iglou.eu/goulc/duration"
+	"gitlab.com/iglou.eu/goulc/contract"
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 )
@@ -36,21 +36,30 @@ const (
 	ResponseName = "oauth2.Response"
 )
 
-// Verify Response implements client.Unmarshaler interface
-var _ client.Unmarshaler = &Response{}
+// Verify interface conformance at compile time
+var (
+	_ client.Unmarshaler = (*Response)(nil)
+	_ contract.Emptier   = ErrorResponse{}
+)
 
 // TokenResponse represents successful access token response
 // RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
 type TokenResponse struct {
-	Token        hided.String      `json:"access_token"`
-	TokenType    string            `json:"token_type"`
-	ExpiresIn    duration.Duration `json:"expires_in"`
-	RefreshToken hided.String      `json:"refresh_token"`
-	Scope        string            `json:"scope"`
+	Token     hided.String `json:"access_token"`
+	TokenType string       `json:"token_type"`
 
-	// Store the issued date
-	// RFC 6749 §5.1: https://www.rfc-editor.org/rfc/rfc6749#section-5.1
-	ExpireAt time.Time
+	// ExpiresIn is the token lifetime in seconds, as defined by
+	// RFC 6749 §5.1. When the server omits it, the token is treated
+	// as already expired and refreshed on every request.
+	ExpiresIn int64 `json:"expires_in"`
+
+	RefreshToken hided.String `json:"refresh_token"`
+	Scope        string       `json:"scope"`
+
+	// ExpireAt is the absolute expiry instant, computed locally from
+	// ExpiresIn when the token is issued. It is not part of the wire
+	// response.
+	ExpireAt time.Time `json:"-"`
 }
 
 // ErrorResponse represents error response
@@ -61,25 +70,42 @@ type ErrorResponse struct {
 	ErrorURI         string `json:"error_uri"`
 }
 
-// Response represents an OAuth2 response that can contain either
-// a successful token response or an error response.
-// It implements the response.Response interface for handling HTTP responses
-// in a standardized way.
+// IsEmpty reports whether the response carries no error. The error code
+// is required on OAuth2 error responses (RFC 6749 §5.2), so an empty
+// code means the server did not return an error.
+func (e ErrorResponse) IsEmpty() bool {
+	return e.Error == ""
+}
+
+// Response represents an OAuth2 token endpoint response, which carries
+// either a successful token response or an error response.
+// It implements the client.Unmarshaler interface for handling HTTP
+// responses in a standardized way.
 type Response struct {
-	TokenResponse
-	ErrorResponse
+	// TokenResponse holds the fields of a successful response.
+	TokenResponse TokenResponse
+	// ErrorResponse holds the fields of an error response. Check
+	// ErrorResponse.IsEmpty to know whether the server returned one.
+	ErrorResponse ErrorResponse
 }
 
 // Name returns the identifier for this response type.
-// It implements the response.Response interface.
+// It implements the client.Unmarshaler interface.
 func (_ Response) Name() string {
 	return ResponseName
 }
 
 // Unmarshal parses the JSON-encoded response body and stores the result
-// in the Response struct. It implements the response.Response interface.
+// in the Response struct. It implements the client.Unmarshaler interface.
+//
+// The token endpoint returns a single flat JSON object whose meaning
+// depends on the HTTP status (RFC 6749 §5.1 and §5.2), so both views
+// are decoded from the same body.
 //
 // Return an error if JSON unmarshaling fails, nil otherwise.
 func (r *Response) Unmarshal(_ int, _ http.Header, body []byte) error {
-	return json.Unmarshal(body, r)
+	if err := json.Unmarshal(body, &r.TokenResponse); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, &r.ErrorResponse)
 }

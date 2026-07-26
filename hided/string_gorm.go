@@ -25,30 +25,77 @@ package hided
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/schema"
 )
 
+// GormString wraps the plaintext secret handed to gorm as a bind parameter,
+// so the REAL value reaches the database while a GormHider-aware logger can
+// still obfuscate it.
+//
+// SECURITY WARNING: GormString.String() intentionally returns the clear
+// value, and gorm's DEFAULT logger prints bind parameters in its SQL traces.
+// Using hided values with the default logger leaks every secret in clear
+// text in the logs. Always configure a logger whose gorm.ParamsFilter
+// replaces GormHider parameters with Hiding(), such as
+// gitlab.com/iglou.eu/goulc/logging.GormLogger.
 type GormString string
 
-var _ = GormHider(GormString(""))
+var (
+	_ GormHider                    = GormString("")
+	_ gorm.Valuer                  = String{}
+	_ sql.Scanner                  = (*String)(nil)
+	_ schema.GormDataTypeInterface = String{}
+)
 
-// GormValue implements gorm.Valuer to safely pass string data to gorm, you
-// need to implement gorm.ParamsFilter to keep value secret into your logger
+// GormDataType implements schema.GormDataTypeInterface so gorm's schema
+// parser maps the field to the dialect's string column type instead of
+// rejecting the struct as a broken relation.
+func (_ String) GormDataType() string {
+	return string(schema.String)
+}
+
+// GormValue implements gorm.Valuer to pass the REAL secret to the database
+// as a bind parameter, wrapped in GormString so a gorm.ParamsFilter logger
+// can still obfuscate it. See the GormString warning about gorm's default
+// logger leaking bind parameters.
 func (s String) GormValue(_ context.Context, _ *gorm.DB) clause.Expr {
 	return clause.Expr{
 		SQL:  "?",
-		Vars: []any{GormString(Value[string](s))},
+		Vars: []any{GormString(s.Reveal())},
 	}
 }
 
-// String is the Stringer, it returns a clear string representation
+// Scan implements sql.Scanner so gorm can load a stored secret back into a
+// String when reading rows.
+func (s *String) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		s.val = nil
+	case string:
+		s.val = []byte(v)
+	case []byte:
+		// Copy: the driver owns src and may reuse it after Scan returns.
+		s.val = make([]byte, len(v))
+		copy(s.val, v)
+	default:
+		return fmt.Errorf("hided: cannot scan %T into String", src)
+	}
+
+	return nil
+}
+
+// String implements the Stringer interface and returns a clear string
+// representation.
 func (g GormString) String() string {
 	return string(g)
 }
 
-// Hiding is to return an obfuscated string
+// Hiding returns an obfuscated string.
 func (_ GormString) Hiding() string {
 	return obfuscated
 }

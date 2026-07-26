@@ -2,18 +2,84 @@ package oauth2_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"gitlab.com/iglou.eu/goulc/duration"
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth/oauth2"
 )
+
+// newTokenServer starts a TLS test server acting as a token endpoint,
+// counting hits so tests can assert on the cache behavior.
+func newTokenServer(
+	t *testing.T, statusCode int, response string, hits *atomic.Int32,
+) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+
+			if r.Method != http.MethodPost {
+				t.Errorf("Expected POST request, got %s", r.Method)
+			}
+			if ct := r.Header.Get("Content-Type"); ct !=
+				"application/x-www-form-urlencoded" {
+				t.Errorf("Expected Content-Type"+
+					" application/x-www-form-urlencoded, got %s", ct)
+			}
+
+			w.WriteHeader(statusCode)
+			_, _ = w.Write([]byte(response))
+		}))
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// newTestCredentials wires a ClientCredentials on the given test server,
+// trusting its self-signed certificate.
+func newTestCredentials(
+	t *testing.T, server *httptest.Server,
+) *oauth2.ClientCredentials {
+	t.Helper()
+
+	httpClient, err := client.New(
+		context.Background(), server.URL, nil, &client.Options{
+			DisableHTTPS:     true,
+			DisableTLSVerify: true,
+			Timeout:          time.Minute,
+		}, nil)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+	t.Cleanup(func() { _ = httpClient.Close() })
+
+	config := oauth2.Config{
+		ClientID:     "test-client",
+		ClientSecret: hided.NewString("test-secret"),
+		Endpoint: oauth2.Endpoint{
+			URL:  server.URL,
+			Auth: "/oauth/token",
+		},
+		Scopes: []string{"read", "write"},
+	}
+
+	cc, err := oauth2.NewClientCredentials(
+		oauth2.ClientInHeader, config, slog.Default(), &httpClient)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	return cc
+}
 
 func TestNewClientCredentials(t *testing.T) {
 	logger := slog.Default()
@@ -85,13 +151,11 @@ func TestNewClientCredentials(t *testing.T) {
 }
 
 func TestClientCredentials_Update(t *testing.T) {
-	logger := slog.Default()
-
 	tests := []struct {
 		name           string
 		mockResponse   string
 		mockStatusCode int
-		wantErr        bool
+		wantErr        error
 	}{
 		{
 			name: "successful token acquisition",
@@ -102,71 +166,161 @@ func TestClientCredentials_Update(t *testing.T) {
 				"scope": "read write"
 			}`,
 			mockStatusCode: http.StatusOK,
-			wantErr:        false,
 		},
 		{
 			name:           "server error",
 			mockResponse:   `{"error": "server_error", "error_description": "Internal error"}`,
 			mockStatusCode: http.StatusInternalServerError,
-			wantErr:        true,
+			wantErr:        oauth2.ErrUnexpectedStatusCode,
 		},
 		{
 			name:           "empty response",
 			mockResponse:   "",
 			mockStatusCode: http.StatusOK,
-			wantErr:        true,
+			wantErr:        oauth2.ErrEmptyBody,
+		},
+		{
+			name:           "response without token",
+			mockResponse:   `{"token_type": "Bearer", "expires_in": 3600}`,
+			mockStatusCode: http.StatusOK,
+			wantErr:        oauth2.ErrNoToken,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test server
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify request
-				if r.Method != "POST" {
-					t.Errorf("Expected POST request, got %s", r.Method)
-				}
-				if r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
-					t.Errorf("Expected Content-Type application/x-www-form-urlencoded, got %s", r.Header.Get("Content-Type"))
-				}
+			var hits atomic.Int32
+			server := newTokenServer(
+				t, tt.mockStatusCode, tt.mockResponse, &hits)
+			cc := newTestCredentials(t, server)
 
-				w.WriteHeader(tt.mockStatusCode)
-				_, _ = w.Write([]byte(tt.mockResponse))
-			}))
-			defer server.Close()
-
-			serverURL, _ := url.Parse(server.URL)
-			// Create a custom HTTP client that trusts the test server's certificate
-			httpClient, err := client.New(context.Background(), server.URL, nil, &client.Options{
-				OnlyHTTPS:        false,
-				DisableTLSVerify: true,
-				Timeout:          time.Duration(1 * time.Minute),
-			}, nil)
-			if err != nil {
-				t.Fatalf("Failed to create HTTP client: %v", err)
+			before := time.Now()
+			err := cc.Update()
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Update() error = %v, want %v", err, tt.wantErr)
 			}
 
-			config := oauth2.Config{
-				ClientID:     "test-client",
-				ClientSecret: hided.NewString("test-secret"),
-				Endpoint: oauth2.Endpoint{
-					URL:  serverURL.String(),
-					Auth: "/oauth/token",
-				},
-				Scopes: []string{"read", "write"},
+			if tt.wantErr != nil {
+				return
 			}
 
-			client, err := oauth2.NewClientCredentials(oauth2.ClientInHeader, config, logger, &httpClient)
-			if err != nil {
-				t.Fatalf("Failed to create client: %v", err)
+			// The acquired token must be cached with its real lifetime,
+			// expires_in is expressed in seconds (RFC 6749 §5.1)
+			if got := cc.Token.Token.Reveal(); got != "new-token" {
+				t.Errorf("Update() token = %q, want %q", got, "new-token")
 			}
 
-			err = client.Update()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Update() error = %v, wantErr %v", err, tt.wantErr)
+			wantExpire := before.Add(3600 * time.Second)
+			if cc.Token.ExpireAt.Before(wantExpire.Add(-time.Minute)) ||
+				cc.Token.ExpireAt.After(wantExpire.Add(time.Minute)) {
+				t.Errorf("Update() ExpireAt = %v, want about %v",
+					cc.Token.ExpireAt, wantExpire)
 			}
 		})
 	}
+}
+
+func TestClientCredentials_TokenCache(t *testing.T) {
+	var hits atomic.Int32
+	server := newTokenServer(t, http.StatusOK, `{
+		"access_token": "cached-token",
+		"token_type": "Bearer",
+		"expires_in": 3600
+	}`, &hits)
+	cc := newTestCredentials(t, server)
+
+	// A valid cached token must be served without any new HTTP fetch
+	for i := 0; i < 2; i++ {
+		if err := cc.Update(); err != nil {
+			t.Fatalf("Update() call %d unexpected error: %v", i+1, err)
+		}
+
+		_, value, err := cc.Header(http.MethodGet, nil, nil)
+		if err != nil {
+			t.Fatalf("Header() call %d unexpected error: %v", i+1, err)
+		}
+		if want := "Bearer cached-token"; value != want {
+			t.Errorf("Header() call %d value = %q, want %q", i+1, value, want)
+		}
+	}
+
+	if got := hits.Load(); got != 1 {
+		t.Errorf("token endpoint hits = %d, want 1", got)
+	}
+}
+
+func TestClientCredentials_UpdateClosedClient(t *testing.T) {
+	httpClient, err := client.New(
+		context.Background(), "https://example.com", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("client.New() unexpected error: %v", err)
+	}
+	if err := httpClient.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+
+	cc, err := oauth2.NewClientCredentials(oauth2.ClientInHeader, oauth2.Config{
+		ClientID:     "test-client",
+		ClientSecret: hided.NewString("test-secret"),
+		Endpoint: oauth2.Endpoint{
+			URL:  "https://example.com",
+			Auth: "/oauth/token",
+		},
+	}, nil, &httpClient)
+	if err != nil {
+		t.Fatalf("NewClientCredentials() unexpected error: %v", err)
+	}
+
+	// A refresh through a closed client must surface the closure
+	// instead of panicking on the nil child
+	if err := cc.Update(); !errors.Is(err, client.ErrClientClosed) {
+		t.Errorf("Update() error = %v, want %v", err, client.ErrClientClosed)
+	}
+
+	// A clone of it carries no usable client and must report the same
+	if err := cc.Clone().Update(); !errors.Is(err, client.ErrClientClosed) {
+		t.Errorf("Clone().Update() error = %v, want %v",
+			err, client.ErrClientClosed)
+	}
+}
+
+func TestClientCredentials_ConcurrentUpdateHeader(t *testing.T) {
+	var hits atomic.Int32
+	// A zero lifetime forces a refresh on every Update, exercising
+	// concurrent writes against concurrent Header reads
+	server := newTokenServer(t, http.StatusOK, `{
+		"access_token": "race-token",
+		"token_type": "Bearer",
+		"expires_in": 0
+	}`, &hits)
+	cc := newTestCredentials(t, server)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				if err := cc.Update(); err != nil {
+					t.Errorf("Update() unexpected error: %v", err)
+					return
+				}
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				if _, _, err := cc.Header(
+					http.MethodGet, nil, nil); err != nil {
+					t.Errorf("Header() unexpected error: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestClientCredentials_Header(t *testing.T) {
@@ -189,7 +343,7 @@ func TestClientCredentials_Header(t *testing.T) {
 	cc.Token = oauth2.TokenResponse{
 		Token:     hided.NewString("test-token"),
 		TokenType: "Bearer",
-		ExpiresIn: duration.Duration{Duration: 3600},
+		ExpiresIn: 3600,
 		ExpireAt:  time.Now().Add(time.Hour),
 	}
 

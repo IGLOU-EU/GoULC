@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"gitlab.com/iglou.eu/goulc/duration"
 )
@@ -22,10 +23,11 @@ type Config struct {
 }
 
 func main() {
-	// Marshal/Unmarshal JSON with Duration
+	// Marshal/Unmarshal JSON with Duration. A bare JSON number is a count
+	// of nanoseconds, the unit of time.Duration itself (here 5 minutes).
 	jsonData := `{
 		"timeout": "30s",
-		"refreshInterval": "5m"
+		"refreshInterval": 300000000000
 	}`
 
 	var config Config
@@ -48,8 +50,8 @@ func main() {
 
 	// Different ways to specify values
 	alternativeConfig := Config{
-		Timeout:         duration.Duration{Duration: 45 * 1e9},      // 45 seconds
-		RefreshInterval: duration.Duration{Duration: 10 * 60 * 1e9}, // 10 minutes
+		Timeout:         duration.New(45 * time.Second),
+		RefreshInterval: duration.New(10 * time.Minute),
 	}
 
 	altJson, err := json.MarshalIndent(alternativeConfig, "", "  ")

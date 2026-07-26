@@ -38,17 +38,21 @@ import (
 
 // GormLogger is a GORM logger adapter that wraps slog.Logger to implement
 // gorm's logger.Interface. It formats database messages through the structured
-// logging pipeline.
+// logging pipeline. The slog.Logger is kept unexported so GORM's Info, Warn,
+// and Error signatures do not clash with promoted slog methods.
 type GormLogger struct {
-	*slog.Logger
+	log *slog.Logger
 }
 
-var _ = logger.Interface(&GormLogger{})
+var (
+	_ logger.Interface  = (*GormLogger)(nil)
+	_ gorm.ParamsFilter = (*GormLogger)(nil)
+)
 
 // NewGormLogger creates a new GormLogger from an existing slog.Logger.
 func NewGormLogger(log *slog.Logger) *GormLogger {
 	return &GormLogger{
-		log,
+		log: log,
 	}
 }
 
@@ -61,19 +65,19 @@ func (g *GormLogger) LogMode(_ logger.LogLevel) logger.Interface {
 // Info logs a database info message, formatting the message and data with
 // fmt.Sprintf.
 func (g *GormLogger) Info(ctx context.Context, msg string, data ...any) {
-	g.InfoContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
+	g.log.InfoContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
 // Warn logs a database warning message, formatting the message and data with
 // fmt.Sprintf.
 func (g *GormLogger) Warn(ctx context.Context, msg string, data ...any) {
-	g.WarnContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
+	g.log.WarnContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
 // Error logs a database error message, formatting the message and data with
 // fmt.Sprintf.
 func (g *GormLogger) Error(ctx context.Context, msg string, data ...any) {
-	g.ErrorContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
+	g.log.ErrorContext(ctx, "Database", "message", fmt.Sprintf(msg, data...))
 }
 
 // Trace logs a database trace including elapsed time, SQL query, and rows
@@ -90,26 +94,29 @@ func (g *GormLogger) Trace(
 		msg = err.Error()
 
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			g.ErrorContext(ctx,
+			g.log.ErrorContext(ctx,
 				msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
 			return
 		}
 	}
 
-	g.DebugContext(ctx,
+	g.log.DebugContext(ctx,
 		msg, "elapsed", elapsed, "trace", sql, "rows affected", rows)
 }
 
 // ParamsFilter implements gorm.ParamsFilter interface, it iterates through
 // params and applies Hiding() when there is an hided.GormHider sensitive values
-func (_ *GormLogger) ParamsFilter(
+func (*GormLogger) ParamsFilter(
 	_ context.Context, sql string, params ...any,
 ) (string, []any) {
-	for i := range params {
-		if sensitive, ok := params[i].(hided.GormHider); ok {
-			params[i] = sensitive.Hiding()
+	// GORM may reuse the params slice for rebind or retry, so the
+	// original values are copied instead of being masked in place.
+	out := append([]any(nil), params...)
+	for i := range out {
+		if sensitive, ok := out[i].(hided.GormHider); ok {
+			out[i] = sensitive.Hiding()
 		}
 	}
 
-	return sql, params
+	return sql, out
 }

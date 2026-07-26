@@ -25,14 +25,15 @@ func main() {
 	ts := Test_DoomServer()
 	defer ts.Close()
 
-	// You can use the client.OptDefault, but it provide a "safe" configuration,
-	// So we can't use it in this non-secure environment.
+	// The client enforces HTTPS by default (the zero value is secure).
+	// Our local httptest server speaks plain HTTP, so we explicitly
+	// disable that enforcement for this example.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	opt := client.Options{
-		OnlyHTTPS: false,
-		Timeout:   time.Second * 5,
+		DisableHTTPS: true,
+		Timeout:      time.Second * 5,
 	}
 
 	// Create an HTTP client without authentication
@@ -56,7 +57,12 @@ func main() {
 		panic(err)
 	}
 
-	doomRes := res.BodyUml.(*DoomResponse)
+	// The client.Result helper replaces the manual type assertion on
+	// res.BodyUml and fails cleanly when the type does not match
+	doomRes, err := client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #02: Like you can see, my body was unmarshaled\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #03 Get request to /demons
@@ -68,7 +74,10 @@ func main() {
 		panic(err)
 	}
 
-	doomRes = res.BodyUml.(*DoomResponse)
+	doomRes, err = client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #03: Ho nooo, you are not authenticated, the door stay closed\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #04 Get request to /demons with authentication
@@ -87,7 +96,10 @@ func main() {
 		panic(err)
 	}
 
-	doomRes = res.BodyUml.(*DoomResponse)
+	doomRes, err = client.Result[DoomResponse](res)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("\nTest #04: And we are authenticated, the door open\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
 
 	// #05 Post request to /weapons
@@ -116,7 +128,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #05: And we have now a BFG, let's ROCK !\nStatus: %v; Body: %#v\n", doomRes.Status, doomRes)
+	fmt.Printf("\nTest #05: And we have now a BFG, let's ROCK !\nStatus: %v; Body: %#v\n", doomResp.Status, doomResp)
 
 	// #06 into the response, you can see some metrics
 	// Let's try a bad endpoint after a redirect
@@ -128,7 +140,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #06: Look there metrics in your face.\nStatus: %v\nResponseTime: %v\nTrace: %#v\nErrorRate: %v%%\n", res.Status, res.ResponseTime, res.Trace, res.ErrorRate)
+	fmt.Printf("\nTest #06: Look there metrics in your face.\nStatus: %v\nResponseTime: %v\nTrace: %#v\n", res.Status, res.ResponseTime, res.Trace)
 
 	// #07 Close the client
 	// To release clients resources, you need to call Close() method, that will
@@ -142,7 +154,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("\nTest #07: Client closed successfully, and child are closed too in cascade.\n> Main client: %#v\n> Child client: %#v\n", httpClient, httpClientWeapons)
+	fmt.Printf("\nTest #07: Client closed successfully, and child are closed too in cascade.\n> Main client: %#v\n> Child client: %#v\n", &httpClient, httpClientWeapons)
 
 }
 

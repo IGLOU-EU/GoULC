@@ -8,7 +8,10 @@ A Go package for handling byte sizes using IEC binary units (powers of 1024). It
 
 - **🔌 Interfacing**:
   - JSON Marshaler/Unmarshaler for IEC string representation
+  - JSON numbers are accepted as byte counts, with the same range checks and fraction handling as strings
+  - Text Marshaler/Unmarshaler, enabling JSON map keys and `flag.TextVar`
   - Stringer for human-readable output
+  - `IsZero()` support, so the `omitzero` JSON tag option (Go 1.24+) omits zero sizes
 
 - **💾 Dual Representation**:
   - Maintains both truncated integer (int64) and exact floating-point (float64) values
@@ -19,13 +22,14 @@ A Go package for handling byte sizes using IEC binary units (powers of 1024). It
     - `String()` returns canonical string (e.g., "42.42MiB")
 
 - **📊 Size Support**:
-  - Range from 0B to ~9 EiB (maximum int64 value)
+  - Range limited to what int64 can represent, ~8 EiB in both directions
   - Supports negative values and floating-point components
   - Truncates toward zero without rounding to prevent overflows
-  - Integer overflow detection
+  - Integer overflow detection on both bounds
+  - Non-finite values (NaN, ±Inf) are rejected at parsing, `ToString` formats them as-is ("+Inf", "-Inf", "NaN")
 
 - **🔤 String Operations**:
-  - Parse size strings in format "NUMBER[OPTIONNAL UNIT]" (e.g., "42", "42.5MiB", "1.2GiB")
+  - Parse size strings in format "NUMBER[OPTIONAL UNIT]" (e.g., "42", "42.5MiB", "1.2GiB")
   - Automatic unit selection for human-readable output
   - Converts short unit forms to IEC standard (e.g., "M" to "MiB")
   - Rounds to 2 decimal places (except for bytes)
@@ -63,12 +67,16 @@ This package uses IEC binary units (powers of 1024) rather than SI decimal units
 ## ⚠️ Important Notes
 
 - Partial bytes not supported (e.g., "1.5 Bytes") - would require arbitrary byte width
-- Error handling covers:
-  - Empty string input
-  - No numeric value found
-  - Invalid IEC unit symbol
-  - Integer overflow from too large value
-  - Invalid JSON input type
+- Failures are reported through exported sentinel error values, match them with `errors.Is`:
+  - `ErrEmptyString`: empty string input
+  - `ErrNoValue`: no numeric value found
+  - `ErrInvalidIEC`: invalid IEC unit symbol
+  - `ErrIntegerOverflow`: value not representable as an int64
+  - `ErrJSONInvalidType`: invalid JSON input type
+
+## 📝 Examples
+
+Complete usage examples can be found in the [examples](/examples/bytesize) directory: [basic](/examples/bytesize/basic) for parsing, formatting, and arithmetic, and [json](/examples/bytesize/json) for JSON integration.
 
 ## 📜 License
 

@@ -37,18 +37,32 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
-	"gitlab.com/iglou.eu/goulc/http/utils"
+	"gitlab.com/iglou.eu/goulc/http/path"
 )
 
-const (
-	percent = 100
+// LoopRateDuration is the polling interval used by Close while waiting
+// for active requests to complete before releasing the client resources.
+const LoopRateDuration = 100 * time.Millisecond
 
-	LoopRateDuration = 100 * time.Millisecond
+const (
+	// DefaultTimeout is the request timeout applied when Options.Timeout
+	// is left at its zero value.
+	DefaultTimeout time.Duration = 35 * time.Second
+
+	// NoTimeout disables the request timeout when set on Options.Timeout,
+	// the explicit opt-out of the hardened default.
+	NoTimeout time.Duration = -1
+
+	// DefaultMaxBodySize is the response body cap applied when
+	// Options.MaxBodySize is left at its zero value.
+	DefaultMaxBodySize int64 = 32 << 20
+
+	// NoBodyLimit disables the response body size cap when set on
+	// Options.MaxBodySize, only safe with trusted servers.
+	NoBodyLimit int64 = -1
 )
 
 var (
@@ -77,6 +91,15 @@ var (
 	// ErrInvalidRedirectLimit is returned when the redirect limit is invalid
 	ErrInvalidRedirectLimit = errors.New("invalid redirect limit")
 
+	// ErrInvalidBodyLimit is returned when the response body size limit
+	// is negative
+	ErrInvalidBodyLimit = errors.New("invalid response body size limit")
+
+	// ErrBodyTooLarge is returned when a response body exceeds
+	// Options.MaxBodySize
+	ErrBodyTooLarge = errors.New(
+		"response body exceeds the configured size limit")
+
 	// ErrNilContext is returned when a nil context is provided
 	ErrNilContext = errors.New("nil context was provided")
 
@@ -88,6 +111,11 @@ var (
 
 	// ErrEmptyMethod is returned when the HTTP method is empty
 	ErrEmptyMethod = errors.New("request method cannot be empty")
+
+	// ErrNoResult is returned by Result when the response carries no
+	// unmarshaled value of the requested type
+	ErrNoResult = errors.New(
+		"response has no unmarshaled result of the requested type")
 )
 
 // OptDefault defines secure default options for the client
@@ -96,14 +124,16 @@ var (
 // - No auth forwarding to other hosts
 // - 35s timeout to prevent hanging
 // - TLS verification enabled
+// - Response bodies capped at 32 MiB to prevent memory exhaustion
 var OptDefault = Options{
-	OnlyHTTPS:        true,
+	DisableHTTPS:     false,
 	Follow:           true,
 	FollowAuth:       false,
 	FollowReferer:    true,
 	MaxRedirect:      2,
-	Timeout:          35 * time.Second,
+	Timeout:          DefaultTimeout,
 	DisableTLSVerify: false,
+	MaxBodySize:      DefaultMaxBodySize,
 }
 
 // New creates and initializes a new Client with the specified configuration.
@@ -111,7 +141,9 @@ var OptDefault = Options{
 // that inherit its configuration.
 //
 // The `serverURL` parameter must include the scheme and path.
-// The `authenticator` parameter can be nil if no authentication is required.
+// The `authenticator` parameter can be nil if no authentication is
+// required. It is shared between all in-flight requests, so it must be
+// safe for concurrent use.
 // The `opt` parameter allows customization of client behavior through
 // the `Options` struct. The `logger` parameter specifies a custom logger;
 // if nil, the default logger is used.
@@ -122,7 +154,7 @@ var OptDefault = Options{
 // New validates the `serverURL` and the provided options, ensuring that
 // timeout and redirect limits are non-negative and that the context
 // is not nil. It removes trailing slashes from the `serverURL` for
-// consistency, enforces HTTPS if the `OnlyHTTPS` option is set, formats
+// consistency, enforces HTTPS unless the `DisableHTTPS` option is set, formats
 // the URL path, and parses query parameters. If an authenticator is provided,
 // it is cloned for the new Client.
 //
@@ -132,8 +164,6 @@ func New(
 	ctx context.Context, serverURL string, authenticator auth.Authenticator,
 	opt *Options, logger *slog.Logger,
 ) (Client, error) {
-	var err error
-
 	// Empty url are not allowed
 	if serverURL == "" {
 		return Client{}, ErrEmptyServerURL
@@ -148,7 +178,7 @@ func New(
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
 		return Client{}, errors.Join(ErrInvalidURL,
-			errors.New("failed to parse URL "+serverURL), err)
+			errors.New("parse URL "+serverURL), err)
 	}
 
 	// Set default logger and context
@@ -160,12 +190,13 @@ func New(
 		ctx = context.Background()
 	}
 
-	// Validate input parameters
+	// Validate input parameters. Negative values are rejected except the
+	// dedicated opt-out sentinels NoTimeout and NoBodyLimit
 	if opt != nil {
 		// Validate timeout
-		if opt.Timeout < 0 {
+		if opt.Timeout < 0 && opt.Timeout != NoTimeout {
 			return Client{}, errors.Join(ErrInvalidTimeout,
-				errors.New("timeout must be >= 0, got "+
+				errors.New("timeout must be >= 0 or NoTimeout, got "+
 					strconv.Itoa(int(opt.Timeout.Seconds()))))
 		}
 
@@ -175,58 +206,130 @@ func New(
 				errors.New("redirect limit must be >= 0, got "+
 					strconv.Itoa(opt.MaxRedirect)))
 		}
+
+		// Validate response body size limit
+		if opt.MaxBodySize < 0 && opt.MaxBodySize != NoBodyLimit {
+			return Client{}, errors.Join(ErrInvalidBodyLimit,
+				errors.New("body size limit must be >= 0 or NoBodyLimit, got "+
+					strconv.FormatInt(opt.MaxBodySize, 10)))
+		}
 	} else {
 		opt = &OptDefault
 	}
 
-	// Initialize the new client
-	main := Client{
-		Mu:      &sync.RWMutex{},
-		logger:  logger,
-		Options: *opt,
-		Header:  make(http.Header),
-		Query:   make(url.Values),
-	}
+	// Normalize a private copy so a zero value applies the hardened
+	// default and the opt-out sentinels map to the internal disabled
+	// value (0). The caller Options is never mutated.
+	options := *opt
+	options.Timeout = normalizeTimeout(options.Timeout)
+	options.MaxBodySize = normalizeBodySize(options.MaxBodySize)
 
-	main.URL = *parsedURL
-	main.URL.Path = utils.PathFormatting(main.URL.Path)
-	main.context, main.cancel = context.WithCancel(ctx)
-
-	if authenticator != nil {
-		main.Auth = authenticator
-	}
-
-	if main.Query, err = url.ParseQuery(main.URL.RawQuery); err != nil {
+	query, err := url.ParseQuery(parsedURL.RawQuery)
+	if err != nil {
 		return Client{}, errors.Join(ErrInvalidQuery,
-			errors.New("failed to parse query "+main.URL.RawQuery), err)
+			errors.New("parse query "+parsedURL.RawQuery), err)
 	}
 
-	if main.Options.OnlyHTTPS && parsedURL.Scheme == "http" {
-		main.logger.Debug("Scheme updated to HTTPS due to OnlyHTTPS option")
-		parsedURL.Scheme = "https"
+	baseURL := *parsedURL
+	baseURL.Path = path.Format(baseURL.Path)
+
+	if !options.DisableHTTPS && baseURL.Scheme == "http" {
+		logger.Debug("Scheme updated to HTTPS by default HTTPS enforcement")
+		baseURL.Scheme = "https"
 	}
 
-	return main, nil
+	// Built once and shared with children and request snapshots so the
+	// transport connection pool is actually reused across requests.
+	// As a consequence, DisableTLSVerify is captured here and cannot be
+	// changed after New.
+	httpClient := &http.Client{Timeout: options.Timeout}
+	if options.DisableTLSVerify {
+		logger.Debug("TLS verification disabled",
+			"warning", "insecure connection",
+			"host", baseURL.Hostname(),
+			"proto", "http/1.1")
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				ServerName:         baseURL.Hostname(),
+				NextProtos:         []string{"http/1.1"},
+			},
+			// A zero value transport never evicts idle connections
+			IdleConnTimeout: 90 * time.Second,
+		}
+	}
+
+	clientCtx, cancel := context.WithCancel(ctx)
+
+	return Client{
+		logger:     logger,
+		context:    clientCtx,
+		cancel:     cancel,
+		httpClient: httpClient,
+		Options:    options,
+		Header:     make(http.Header),
+		Auth:       authenticator,
+		URL:        baseURL,
+		Query:      query,
+	}, nil
+}
+
+// normalizeTimeout maps the public timeout semantics to the internal
+// value used by http.Client and Close, where 0 means no timeout: a zero
+// input applies DefaultTimeout, the NoTimeout sentinel becomes 0.
+func normalizeTimeout(t time.Duration) time.Duration {
+	switch t {
+	case 0:
+		return DefaultTimeout
+	case NoTimeout:
+		return 0
+	default:
+		return t
+	}
+}
+
+// normalizeBodySize maps the public body limit semantics to the internal
+// value, where 0 means unlimited: a zero input applies DefaultMaxBodySize,
+// the NoBodyLimit sentinel becomes 0.
+func normalizeBodySize(size int64) int64 {
+	switch size {
+	case 0:
+		return DefaultMaxBodySize
+	case NoBodyLimit:
+		return 0
+	default:
+		return size
+	}
 }
 
 // NewChild creates a new Client that inherits the parent's configuration
 // but operates independently. The new client is isolated from the parent,
 // allowing for concurrent modifications without affecting the parent client.
+// It returns nil if the parent is already closed.
 //
-// The path parameter is appended to the parent's URL path. If empty,
+// The childPath parameter is appended to the parent's URL path. If empty,
 // the parent's path remains unchanged. The path is automatically formatted
 // to ensure proper URL structure.
+//
+// The path is appended as raw, already decoded text: a segment that
+// contains "/" or ".." reshapes the resulting URL (".." is resolved by
+// the formatting), and "%" is re-encoded when the URL is serialized, so
+// pre-escaped input gets double encoded. Use NewChildSegments to inject
+// external values safely.
 //
 // Example:
 //
 // parent := client.New("https://api.example.com", nil, nil, nil)
 // child := parent.NewChild("/v1/users")
 // // child URL will be https://api.example.com/v1/users
-func (c *Client) NewChild(path string) *Client {
-	child := c.Clone()
+func (c *Client) NewChild(childPath string) *Client {
+	child := c.newChild()
+	if child == nil {
+		return nil
+	}
 
-	if path != "" {
-		newPath := utils.PathFormatting(path)
+	if childPath != "" {
+		newPath := path.Format(childPath)
 
 		if child.URL.Path == "/" {
 			child.URL.Path = newPath
@@ -235,47 +338,151 @@ func (c *Client) NewChild(path string) *Client {
 		}
 	}
 
-	c.logger.Debug("new child client created",
-		"parent_url", c.URL.String(),
-		"child_url", child.URL.String())
-	return child
-}
-
-// Clone creates and returns a new Client that is a copy of the original.
-// The cloned Client shares the same logger and RateLimiter as the original but
-// has its own mutex, context, headers, parameters, and error history.
-// If the original Client is closed, the cloned Client is also marked as
-// closed. The new Client’s context is derived from the original’s context,
-// and authentication is cloned if it exists.
-func (c *Client) Clone() *Client {
-	c.Mu.RLock()
-
-	if c.closed {
-		c.Mu.RUnlock()
+	// Publish only the finished child, a concurrent Close must never
+	// see it half built
+	if !c.registerChild(child) {
 		return nil
 	}
 
-	clone := &Client{
-		closed:         c.closed,
-		activeRequests: 0,
-		logger:         c.logger, // keep original pointer
-		closer:         []func() error{},
+	if c.debugEnabled() {
+		c.logger.Debug("new child client created",
+			"parent_url", c.URL.String(),
+			"child_url", child.URL.String())
+	}
+	return child
+}
 
-		Mu: &sync.RWMutex{},
-		Options: Options{
-			OnlyHTTPS:        c.Options.OnlyHTTPS,
-			Follow:           c.Options.Follow,
-			FollowAuth:       c.Options.FollowAuth,
-			FollowReferer:    c.Options.FollowReferer,
-			MaxRedirect:      c.Options.MaxRedirect,
-			Timeout:          c.Options.Timeout,
-			DisableTLSVerify: c.Options.DisableTLSVerify,
-			RateLimiter:      c.Options.RateLimiter, // keep original pointer
-		},
-		Header:       c.Header.Clone(),
-		URL:          c.URL,
-		Query:        maps.Clone(c.Query),
-		ErrorHistory: []ErrorHistory{},
+// NewChildSegments creates a child Client like NewChild, but treats
+// every argument as one literal path segment. Each segment is
+// percent-encoded, so values containing "/", "..", "%" or any other
+// metacharacter cannot restructure the resulting URL. Empty segments
+// are dropped. It returns nil if the parent is already closed.
+//
+// Use it whenever a path element comes from external input:
+//
+// child := parent.NewChildSegments("projects", projectID, "tasks", taskID)
+func (c *Client) NewChildSegments(segments ...string) *Client {
+	child := c.newChild()
+	if child == nil {
+		return nil
+	}
+
+	if len(segments) > 0 {
+		escaped := make([]string, len(segments))
+		for i, segment := range segments {
+			escaped[i] = escapeSegment(segment)
+		}
+
+		child.URL = *child.URL.JoinPath(escaped...)
+	}
+
+	// Publish only the finished child, a concurrent Close must never
+	// see it half built
+	if !c.registerChild(child) {
+		return nil
+	}
+
+	if c.debugEnabled() {
+		c.logger.Debug("new child client created",
+			"parent_url", c.URL.String(),
+			"child_url", child.URL.String())
+	}
+	return child
+}
+
+// escapeSegment keeps a path segment literal once joined. PathEscape
+// covers every metacharacter but leaves dots alone, and the URL path
+// join would resolve "." and ".." segments away, so those two are
+// force-encoded.
+func escapeSegment(segment string) string {
+	switch segment {
+	case ".":
+		return "%2E"
+	case "..":
+		return "%2E%2E"
+	default:
+		return url.PathEscape(segment)
+	}
+}
+
+// Clone creates and returns a new Client that is a copy of the original.
+// The cloned Client shares the same logger and RateLimiter as the original
+// but has its own mutex, context, headers and parameters. If the original
+// Client is closed, Clone returns nil. The new Client’s context is derived
+// from the original’s context, and authentication is cloned if it exists.
+func (c *Client) Clone() *Client {
+	clone := c.newChild()
+	if clone == nil || !c.registerChild(clone) {
+		return nil
+	}
+
+	return clone
+}
+
+// newChild builds an unregistered long-lived child. Unlike request
+// snapshots it deep-clones the authenticator so both lineages evolve
+// independently. The caller must publish it with registerChild once the
+// child is fully built, and only then: a concurrent Close cascade must
+// never reach a child still under construction.
+func (c *Client) newChild() *Client {
+	child := c.snapshot()
+	if child == nil {
+		return nil
+	}
+
+	if child.Auth != nil {
+		child.Auth = child.Auth.Clone()
+	}
+
+	return child
+}
+
+// registerChild publishes a fully built child to the closer list so the
+// parent Close cascades to it. When the parent closed in the meantime it
+// releases the child context and reports false, so no orphan escapes.
+func (c *Client) registerChild(child *Client) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		child.cancel()
+		return false
+	}
+
+	c.closer = append(c.closer, child.Close)
+
+	return true
+}
+
+// snapshot returns a private copy of the client state so an in-flight
+// request is isolated from concurrent mutations. Unlike Clone, the copy
+// is not registered in the parent closer list: a per-request registration
+// would be retained for the whole parent lifetime. The authenticator is
+// shared, not cloned: it owns cross-request state such as token caches,
+// which a throwaway copy would silently discard.
+func (c *Client) snapshot() *Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.closed {
+		return nil
+	}
+
+	return c.copyLocked()
+}
+
+// copyLocked builds the actual copy. The caller must hold c.mu. The
+// authenticator is shared per the Authenticator concurrency contract,
+// Clone overrides it for long-lived children.
+func (c *Client) copyLocked() *Client {
+	clone := &Client{
+		logger:     c.logger,     // keep original pointer
+		httpClient: c.httpClient, // share the pooled transport
+		Options:    c.Options,    // shallow copy, RateLimiter is shared
+		Header:     c.Header.Clone(),
+		Auth:       c.Auth,
+		URL:        c.URL,
+		Query:      maps.Clone(c.Query),
 	}
 
 	clone.context, clone.cancel = context.WithCancel(c.context)
@@ -284,18 +491,6 @@ func (c *Client) Clone() *Client {
 		user := *c.URL.User
 		clone.URL.User = &user
 	}
-
-	if c.Auth != nil {
-		clone.Auth = c.Auth.Clone()
-	}
-
-	c.Mu.RUnlock()
-
-	// Add the new client to the closer list of the parent
-	// This ensure that the child client is closed when the parent is closed
-	c.Mu.Lock()
-	c.closer = append(c.closer, clone.Close)
-	c.Mu.Unlock()
 
 	return clone
 }
@@ -309,12 +504,13 @@ func (c *Client) Clone() *Client {
 //
 // client.FlushHeader().FlushQuery()
 func (c *Client) FlushHeader() *Client {
-	c.logger.Debug("flushing headers", "current_headers",
-		slices.Sorted(maps.Keys(c.Header)))
-
-	c.Mu.Lock()
+	c.mu.Lock()
+	if c.debugEnabled() {
+		c.logger.Debug("flushing headers", "current_headers",
+			slices.Sorted(maps.Keys(c.Header)))
+	}
 	c.Header = http.Header{}
-	c.Mu.Unlock()
+	c.mu.Unlock()
 
 	return c
 }
@@ -328,53 +524,14 @@ func (c *Client) FlushHeader() *Client {
 //
 // client.FlushQuery().Do(http.MethodGet, nil, nil)
 func (c *Client) FlushQuery() *Client {
-	c.logger.Debug("flushing query parameters", "current_query", c.Query)
-
-	c.Mu.Lock()
+	c.mu.Lock()
+	if c.debugEnabled() {
+		c.logger.Debug("flushing query parameters", "current_query", c.Query)
+	}
 	c.Query = url.Values{}
-	c.Mu.Unlock()
+	c.mu.Unlock()
 
 	return c
-}
-
-// calculateErrorRate determines the error rate for the specified status code,
-// removing entries older than one minute to ensure accuracy.
-func (c *Client) calculateErrorRate(statusCode int) float64 {
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
-
-	// Clean old entries (older than 1 minute)
-	now := time.Now()
-	minTime := now.Add(-time.Minute)
-	var newHistory []ErrorHistory
-	for _, entry := range c.ErrorHistory {
-		if entry.Timestamp.After(minTime) {
-			newHistory = append(newHistory, entry)
-		}
-	}
-
-	// Add current request
-	newHistory = append(newHistory, ErrorHistory{
-		URL:        c.URL.String(),
-		StatusCode: statusCode,
-		Timestamp:  now,
-		IsError:    statusCode >= http.StatusBadRequest,
-	})
-	c.ErrorHistory = newHistory
-
-	// Calculate error rate
-	if len(newHistory) == 0 {
-		return 0
-	}
-
-	var errorCount int
-	for _, entry := range newHistory {
-		if entry.IsError {
-			errorCount++
-		}
-	}
-
-	return float64(errorCount) / float64(len(newHistory)) * percent
 }
 
 // FollowRedirects returns a RedirectFunc that follows HTTP redirects according
@@ -425,9 +582,16 @@ func (c *Client) FollowRedirects(
 				errors.New("stopped after "+strconv.Itoa(nb)+" redirects"))
 		}
 
-		// Enforce HTTPS on redirects if configured
-		if c.Options.OnlyHTTPS && req.URL.Scheme == "http" {
+		// Enforce HTTPS on redirects unless explicitly disabled
+		if !c.Options.DisableHTTPS && req.URL.Scheme == "http" {
 			req.URL.Scheme = "https"
+		}
+
+		// Never let credentials issued over TLS travel on a cleartext
+		// downgrade, even toward the same host
+		if req.URL.Scheme == "http" && len(via) > 0 &&
+			via[len(via)-1].URL.Scheme == "https" {
+			req.Header.Del("Authorization")
 		}
 
 		// Apply rate limiting to redirect requests if configured
@@ -437,97 +601,116 @@ func (c *Client) FollowRedirects(
 			}
 		}
 
-		c.logger.Debug("follow redirection",
-			"from", prevURL, "to", req.URL.String(),
-			"redirect_count", nb, "max_redirect", c.Options.MaxRedirect)
+		if c.debugEnabled() {
+			c.logger.Debug("follow redirection",
+				"from", prevURL, "to", req.URL.String(),
+				"redirect_count", nb, "max_redirect", c.Options.MaxRedirect)
+		}
 		return nil
 	}
 }
 
-// Close gracefully shuts down the Client and releases all associated resources.
-// It marks the Client as closed to prevent new requests, logs the closure
-// process, and waits for active requests to complete within the configured
-// timeout. If active requests do not finish before the timeout, a warning is
-// logged. After calling Close, the Client cannot be reused.
+// Close gracefully shuts down the Client. It marks the Client as closed
+// to prevent new requests, cancels its context, waits for active
+// requests to complete within the configured timeout, and releases the
+// pooled connections it owns. If active requests do not finish before
+// the timeout, a warning is logged. Child clients are closed in cascade
+// and their errors are joined into the returned error. After calling
+// Close, the Client cannot be reused.
 func (c *Client) Close() error {
-	// Lock temporarily to avoid hanging active requests
-	c.Mu.Lock()
+	// Lock temporarily to avoid hanging active requests. The URL is
+	// captured under the lock, log arguments must not read shared state
+	c.mu.Lock()
 	if c.closed {
 		// In case the context was not closed
 		if c.cancel != nil {
 			c.cancel()
 		}
 
-		c.Mu.Unlock()
+		c.mu.Unlock()
 		return nil
 	}
 	c.closed = true
 	timeOut := c.Options.Timeout
-	c.Mu.Unlock()
+	closingURL := c.URL.String()
+	c.mu.Unlock()
 
 	// Log closing
 	c.logger.Debug("closing http client",
-		"url", c.URL.String(),
-		"active_requests", atomic.LoadInt32(&c.activeRequests))
+		"url", closingURL,
+		"active_requests", c.activeRequests.Load())
 
 	// Wait for active requests to complete (with timeout)
-	ctx, cancel := context.WithTimeout(context.Background(), timeOut)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		for atomic.LoadInt32(&c.activeRequests) > 0 {
-			time.Sleep(LoopRateDuration)
+	if c.activeRequests.Load() > 0 {
+		// A zero internal timeout means no deadline, so wait until the
+		// requests drain rather than expiring immediately
+		ctx := context.Background()
+		if timeOut > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeOut)
+			defer cancel()
 		}
-		close(done)
-	}()
 
-	// Wait for either completion or timeout
-	select {
-	case <-done:
-		c.logger.Debug("http client closed successfully")
-	case <-ctx.Done():
-		c.logger.Warn("http client close timed out with active requests",
-			"active_requests", atomic.LoadInt32(&c.activeRequests),
-			"ctx_err", ctx.Err())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+
+			for c.activeRequests.Load() > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(LoopRateDuration):
+				}
+			}
+		}()
+
+		// Wait for either completion or timeout
+		select {
+		case <-done:
+			c.logger.Debug("http client closed successfully")
+		case <-ctx.Done():
+			// Own the poller lifetime, it must not outlive Close
+			<-done
+			c.logger.Warn("http client close timed out with active requests",
+				"active_requests", c.activeRequests.Load(),
+				"ctx_err", ctx.Err())
+		}
 	}
 
-	// Clean up resources
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
+	// Release resources. Shared fields (URL, Header, Options, logger)
+	// are left in place on purpose: zeroing them raced with lock-free
+	// readers, and the closed flag already prevents any further use
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.cancel != nil {
 		c.cancel()
 	}
 
-	c.Options = Options{}
-	c.Header = nil
-	c.Auth = nil
-	c.URL = url.URL{}
-	c.Query = nil
-	c.ErrorHistory = nil
-
-	// Close all child clients
-	wg := sync.WaitGroup{}
-	for _, closer := range c.closer {
-		wg.Add(1)
-		go func(closer func() error) {
-			defer wg.Done()
-			if closer == nil {
-				return
-			}
-
-			if err := closer(); err != nil {
-				c.logger.Error("error closing child client", "error", err)
-			}
-		}(closer)
+	// Drop pooled connections of the client-owned transport so idle
+	// sockets and their goroutines do not outlive the client
+	if c.httpClient != nil {
+		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+		c.httpClient = nil
 	}
-	wg.Wait()
+
+	// Close all child clients, keeping their errors visible to the caller
+	var errs []error
+	for _, closeChild := range c.closer {
+		if closeChild == nil {
+			continue
+		}
+
+		if err := closeChild(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 
 	c.closer = nil
-	c.logger = nil
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // DoWithMarshal is a convenience function that performs a client.Do() call but
@@ -540,12 +723,8 @@ func (main *Client) DoWithMarshal(
 		return nil, ErrClientClosed
 	}
 
-	// Create a copy of the client to avoid modifying the original
-	// and potential race conditions
-	c := main.Clone() // Clone are thread-safe
-
 	if body == nil {
-		return c.Do(method, nil, resp)
+		return main.doRequest(method, "", nil, resp)
 	}
 
 	bodyData, err := body.Marshal()
@@ -553,13 +732,13 @@ func (main *Client) DoWithMarshal(
 		return nil, err
 	}
 
-	c.logger.Debug("http client marshalling body",
-		"marshaller", body.Name(),
-		"content_type", body.ContentType())
+	if main.debugEnabled() {
+		main.logger.Debug("http client marshalling body",
+			"marshaller", body.Name(),
+			"content_type", body.ContentType())
+	}
 
-	c.Header.Set("Content-Type", body.ContentType())
-
-	return c.Do(method, bodyData, resp)
+	return main.doRequest(method, body.ContentType(), bodyData, resp)
 }
 
 // Do performs an HTTP request with the specified method and body. It manages
@@ -569,11 +748,11 @@ func (main *Client) DoWithMarshal(
 //
 // Example:
 //
-//	resp, err := client.Do(http.MethodGet, nil, &MyResponseType{})
+//	resp, err := c.Do(http.MethodGet, nil, &MyResponseType{})
 //	if err != nil {
 //	    return err
 //	}
-//	// Use type assertion like resp.BodyUml.(*MyResponseType) to access data
+//	// Use client.Result[MyResponseType](resp) to access the typed data
 //
 // Parameters:
 //   - method: The HTTP method to use for the request.
@@ -586,107 +765,59 @@ func (main *Client) DoWithMarshal(
 func (main *Client) Do(
 	method string, body []byte, respUml Unmarshaler,
 ) (*Response, error) {
+	return main.doRequest(method, "", body, respUml)
+}
+
+// doRequest performs the request on a private snapshot of the client so
+// concurrent configuration changes cannot race with an in-flight call.
+// A non-empty contentType takes precedence over the client-level header.
+func (main *Client) doRequest(
+	method, contentType string, body []byte, respUml Unmarshaler,
+) (*Response, error) {
 	// Check if client is closed
 	if main.IsClosed() {
 		return nil, ErrClientClosed
 	}
 
-	// Create a copy of the client to avoid modifying the original
-	// and potential race conditions
-	c := main.Clone() // Clone are thread-safe
-	defer func() {
-		c.Close()
-		c = nil
-	}() // Release resources when done
+	// Work on a snapshot so the caller's client stays untouched
+	c := main.snapshot()
+	if c == nil {
+		return nil, ErrClientClosed
+	}
+
+	// Releasing the snapshot context is enough, a full Close would
+	// spawn a wait cycle per request for no benefit
+	defer c.cancel()
 
 	// Increment main active requests counter
-	atomic.AddInt32(&main.activeRequests, 1)
-	defer atomic.AddInt32(&main.activeRequests, -1)
+	main.activeRequests.Add(1)
+	defer main.activeRequests.Add(-1)
 
 	// Validate input parameters
 	if method == "" {
 		return nil, errors.Join(ErrInvalidMethod, ErrEmptyMethod)
 	}
 
-	// Add query to URL
-	if len(c.Query) > 0 {
-		c.logger.Debug("encoding query parameters", "query", c.Query)
-		c.URL.RawQuery = c.Query.Encode()
-	}
-
-	// Create request with context for cancellation/timeout support
-	var err error
-	var req *http.Request
-
-	if body != nil {
-		req, err = http.NewRequestWithContext(c.context,
-			method, c.URL.String(), bytes.NewReader(body))
-	} else {
-		req, err = http.NewRequestWithContext(c.context,
-			method, c.URL.String(), nil)
-	}
-
+	req, err := c.buildRequest(method, contentType, body)
 	if err != nil {
 		return nil, err
-	}
-
-	// Copy all headers from client to request
-	// Using maps.Copy ensures a proper deep copy of the headers
-	maps.Copy(req.Header, c.Header)
-
-	if body != nil && req.Header.Get("Content-Type") == "" {
-		c.logger.Debug("setting the default content type",
-			"content_type", "application/json",
-			"body_size", len(body))
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	// Handle authentication if configured
-	// Some auth methods might need to read the body to generate the auth header
-	// (e.g., for signing the request)
-	if c.Auth != nil {
-		c.logger.Debug("adding authentication header",
-			"auth_name", c.Auth.Name())
-
-		if err := c.Auth.Update(); err != nil {
-			return nil, err
-		}
-
-		name, value, err := c.Auth.Header(method, req.URL, body)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set(name, value)
 	}
 
 	// Initialize redirects tracking
 	redirectsVia := make([]Redirects, 0, 1)
 
-	// Create HTTP client with configured timeout and redirect
-	client := &http.Client{
-		Timeout:       c.Options.Timeout,
-		CheckRedirect: c.FollowRedirects(&redirectsVia),
-	}
+	// Shallow copy of the shared http.Client: the pooled transport is
+	// reused while redirect tracking stays request-scoped
+	httpClient := *c.httpClient
+	httpClient.Timeout = c.Options.Timeout
+	httpClient.CheckRedirect = c.FollowRedirects(&redirectsVia)
 
-	// Configure TLS if needed
-	if c.Options.DisableTLSVerify {
-		c.logger.Debug("TLS verification disabled",
-			"warning", "insecure connection",
-			"host", c.URL.Hostname(),
-			"proto", "http/1.1")
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         c.URL.Hostname(),
-				NextProtos:         []string{"http/1.1"},
-			},
-		}
+	if c.debugEnabled() {
+		c.logger.Debug("executing HTTP request",
+			"method", req.Method,
+			"url", req.URL.String(),
+			"headers", slices.Sorted(maps.Keys(req.Header)))
 	}
-
-	c.logger.Debug("executing HTTP request",
-		"method", req.Method,
-		"url", req.URL.String(),
-		"headers", slices.Sorted(maps.Keys(req.Header)))
 
 	start := time.Now()
 
@@ -697,7 +828,7 @@ func (main *Client) Do(
 		}
 	}
 
-	httpRes, err := client.Do(req)
+	httpRes, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -711,62 +842,170 @@ func (main *Client) Do(
 		Proto:        httpRes.Proto,
 		Header:       httpRes.Header.Clone(),
 		Request:      httpRes.Request,
-		raw:          httpRes,
 		ResponseTime: time.Since(start),
 		Trace:        redirectsVia,
-		ErrorRate:    c.calculateErrorRate(httpRes.StatusCode),
 	}
 
-	c.logger.Debug("HTTP request",
-		"success", resp.Success,
-		"method", req.Method,
-		"path", req.URL.Path,
-		"status", resp.Status,
-		"trace", resp.Trace,
-		"response_time", resp.ResponseTime,
-		"error_rate", resp.ErrorRate)
+	if c.debugEnabled() {
+		c.logger.Debug("HTTP request",
+			"success", resp.Success,
+			"method", req.Method,
+			"path", req.URL.Path,
+			"status", resp.Status,
+			"trace", resp.Trace,
+			"response_time", resp.ResponseTime)
+	}
 
 	if httpRes.ContentLength == 0 {
 		c.logger.Debug("empty response body received")
 		return resp, nil
 	}
-	c.logger.Debug("reading response body",
-		"status_code", resp.StatusCode,
-		"content_length", httpRes.ContentLength)
 
-	resp.Body, err = io.ReadAll(httpRes.Body)
+	if err := c.readBody(httpRes, resp, respUml); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// buildRequest assembles the outgoing request from the snapshot state:
+// URL query, headers, content type and authentication.
+func (c *Client) buildRequest(
+	method, contentType string, body []byte,
+) (*http.Request, error) {
+	debug := c.debugEnabled()
+
+	// Add query to URL
+	if len(c.Query) > 0 {
+		if debug {
+			c.logger.Debug("encoding query parameters", "query", c.Query)
+		}
+		c.URL.RawQuery = c.Query.Encode()
+	}
+
+	// Create request with context for cancellation/timeout support,
+	// keeping a nil reader interface when there is no body
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(c.context,
+		method, c.URL.String(), bodyReader)
 	if err != nil {
-		return nil, errors.Join(ErrRequestFailed, err)
+		return nil, err
+	}
+
+	// Copy all headers from client to request
+	// Using maps.Copy ensures a proper deep copy of the headers
+	maps.Copy(req.Header, c.Header)
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	if body != nil && req.Header.Get("Content-Type") == "" {
+		if debug {
+			c.logger.Debug("setting the default content type",
+				"content_type", "application/json",
+				"body_size", len(body))
+		}
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Handle authentication if configured
+	// Some auth methods might need to read the body to generate the auth
+	// header (e.g., for signing the request)
+	if c.Auth != nil {
+		if debug {
+			c.logger.Debug("adding authentication header",
+				"auth_name", c.Auth.Name())
+		}
+
+		if err := c.Auth.Update(); err != nil {
+			return nil, err
+		}
+
+		name, value, err := c.Auth.Header(method, req.URL, body)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set(name, value)
+	}
+
+	return req, nil
+}
+
+// readBody reads the response body under the configured size cap and
+// runs the optional unmarshaler.
+func (c *Client) readBody(
+	httpRes *http.Response, resp *Response, respUml Unmarshaler,
+) error {
+	debug := c.debugEnabled()
+
+	if debug {
+		c.logger.Debug("reading response body",
+			"status_code", resp.StatusCode,
+			"content_length", httpRes.ContentLength)
+	}
+
+	// Cap the read so a hostile server cannot exhaust memory, one
+	// extra byte makes an over-limit body distinguishable
+	bodyReader := io.Reader(httpRes.Body)
+	if limit := c.Options.MaxBodySize; limit > 0 {
+		bodyReader = io.LimitReader(httpRes.Body, limit+1)
+	}
+
+	var err error
+	resp.Body, err = io.ReadAll(bodyReader)
+	if err != nil {
+		return errors.Join(ErrRequestFailed, err)
+	}
+
+	if limit := c.Options.MaxBodySize; limit > 0 &&
+		int64(len(resp.Body)) > limit {
+		return errors.Join(ErrBodyTooLarge,
+			errors.New("limit is "+strconv.FormatInt(limit, 10)+" bytes"))
 	}
 
 	// Unmarshal response body if an unmarshaler is provided
 	// This allows automatic parsing of JSON/XML/etc into structs
 	// The unmarshaler has access to both the status code and body
 	// to handle different response formats based on status
-	if respUml != nil {
+	if respUml == nil {
+		return nil
+	}
+
+	if debug {
 		c.logger.Debug("unmarshaling response body",
 			"unmarshaler", respUml.Name(),
 			"body_size", len(resp.Body))
-
-		resp.BodyUml = respUml
-		if err := resp.BodyUml.Unmarshal(
-			resp.StatusCode, resp.Header, resp.Body,
-		); err != nil {
-			return nil, errors.Join(ErrRequestFailed, err)
-		}
 	}
 
-	return resp, nil
+	resp.BodyUml = respUml
+	if err := resp.BodyUml.Unmarshal(
+		resp.StatusCode, resp.Header, resp.Body,
+	); err != nil {
+		return errors.Join(ErrRequestFailed, err)
+	}
+
+	return nil
+}
+
+// debugEnabled reports whether debug records are collected, letting hot
+// paths skip building their log arguments.
+func (c *Client) debugEnabled() bool {
+	return c.logger.Enabled(c.context, slog.LevelDebug)
 }
 
 // IsClosed checks if the client is closed.
 // Call Close() if the context is closed but not the client,
 // or if the client is closed but not the context.
 func (c *Client) IsClosed() bool {
-	c.Mu.RLock()
+	c.mu.RLock()
 
 	if c.context.Err() != nil {
-		c.Mu.RUnlock()
+		c.mu.RUnlock()
 
 		if !c.closed {
 			c.Close() // Ctx closed but Client open
@@ -776,12 +1015,12 @@ func (c *Client) IsClosed() bool {
 	}
 
 	if c.closed {
-		c.Mu.RUnlock()
+		c.mu.RUnlock()
 
 		c.Close() // Client closed but ctx open
 		return true
 	}
 
-	c.Mu.RUnlock()
+	c.mu.RUnlock()
 	return false
 }

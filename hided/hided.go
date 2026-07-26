@@ -48,17 +48,26 @@ type Hider interface {
 	Value() any
 }
 
-// Value returns the underlying value of h asserted to T. If the underlying
-// value is not of type T, the zero value of T is returned.
+// Value returns the underlying value of h asserted to T. If h is nil or the
+// underlying value is not of type T, the zero value of T is returned.
 //
 // It is a type-safe alternative to a raw type assertion on Hider.Value(),
 // avoiding both the panic of a single-return assertion and the boilerplate
 // of the comma-ok idiom on every call site.
+//
+// The zero value on a type mismatch is silent by design: this helper trades
+// error reporting for call-site brevity. On paths where an empty secret must
+// not pass for a valid one (authentication, credentials), check IsEmpty() on
+// the Hider or the result before using it.
 func Value[T any](h Hider) T {
+	var empty T
+	if h == nil {
+		return empty
+	}
+
 	if v, ok := h.Value().(T); ok {
 		return v
 	}
 
-	var empty T
 	return empty
 }

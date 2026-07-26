@@ -1,24 +1,40 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	"golang.org/x/time/rate"
 
 	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
+
+// TestMain fails the package when any test leaks a goroutine.
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
+// debugLogger exercises the debug-gated code paths without polluting
+// the test output.
+func debugLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard,
+		&slog.HandlerOptions{Level: slog.LevelDebug}))
+}
 
 // mockAuthenticator implements auth.Authenticator for testing
 type mockAuthenticator struct {
@@ -61,6 +77,117 @@ func (m *mockResponse) Unmarshal(_ int, _ http.Header, body []byte) error {
 	return json.Unmarshal(body, m)
 }
 
+// countingAuthenticator mimics a token-caching authenticator such as the
+// oauth2 one: Update only fetches when the instance holds no token yet,
+// and Clone returns a fresh instance with an independent cache.
+type countingAuthenticator struct {
+	updates atomic.Int32
+	fetches atomic.Int32
+
+	mu    sync.Mutex
+	token string
+}
+
+func (_ *countingAuthenticator) Name() string { return "counting" }
+
+func (a *countingAuthenticator) Update() error {
+	a.updates.Add(1)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.token == "" {
+		a.fetches.Add(1)
+		a.token = "cached-token"
+	}
+
+	return nil
+}
+
+func (a *countingAuthenticator) Header(_ string, _ *url.URL, _ []byte,
+) (headerKey, headerValue string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.token == "" {
+		return "", "", errors.New("no token cached")
+	}
+
+	return "Authorization", "Bearer " + a.token, nil
+}
+
+func (a *countingAuthenticator) Clone() auth.Authenticator {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return &countingAuthenticator{token: a.token}
+}
+
+// otherResponse implements client.Unmarshaler with another concrete type
+type otherResponse struct{}
+
+func (_ *otherResponse) Name() string { return "otherResponse" }
+func (_ *otherResponse) Unmarshal(_ int, _ http.Header, _ []byte) error {
+	return nil
+}
+
+// The production rate limiter must keep satisfying the consumed interface
+var _ client.Ratelimiter = (*rate.Limiter)(nil)
+
+func TestResult(t *testing.T) {
+	filled := &mockResponse{Message: "war never changes"}
+
+	tests := []struct {
+		name      string
+		give      *client.Response
+		want      *mockResponse
+		wantErrIs error
+	}{
+		{
+			name:      "nil response",
+			give:      nil,
+			wantErrIs: client.ErrNoResult,
+		},
+		{
+			name:      "response without unmarshaler",
+			give:      &client.Response{},
+			wantErrIs: client.ErrNoResult,
+		},
+		{
+			name:      "unmarshaler of another type",
+			give:      &client.Response{BodyUml: &otherResponse{}},
+			wantErrIs: client.ErrNoResult,
+		},
+		{
+			name: "matching type",
+			give: &client.Response{BodyUml: filled},
+			want: filled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := client.Result[mockResponse](tt.give)
+			if tt.wantErrIs != nil {
+				if !errors.Is(err, tt.wantErrIs) {
+					t.Errorf("Result() error = %v, want %v", err, tt.wantErrIs)
+				}
+				if got != nil {
+					t.Errorf("Result() = %v, want nil", got)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Result() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Result() = %p, want %p", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNew(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -69,6 +196,7 @@ func TestNew(t *testing.T) {
 		opt           *client.Options
 		logger        *slog.Logger
 		ctx           context.Context
+		wantScheme    string
 		wantErr       bool
 		expectedError error
 	}{
@@ -106,10 +234,20 @@ func TestNew(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name:      "HTTP URL with OnlyHTTPS",
+			name:       "HTTP URL with HTTPS enforced",
+			serverURL:  "http://candlekeep.faerun",
+			opt:        &client.OptDefault,
+			wantScheme: "https",
+			wantErr:    false,
+		},
+		{
+			name:      "HTTP URL with HTTPS disabled",
 			serverURL: "http://candlekeep.faerun",
-			opt:       &client.OptDefault,
-			wantErr:   false,
+			opt: &client.Options{
+				DisableHTTPS: true,
+			},
+			wantScheme: "http",
+			wantErr:    false,
 		},
 		{
 			name:      "with authenticator",
@@ -125,7 +263,7 @@ func TestNew(t *testing.T) {
 			name:      "with custom options",
 			serverURL: "https://candlekeep.faerun",
 			opt: &client.Options{
-				OnlyHTTPS:        true,
+				DisableHTTPS:     false,
 				Follow:           true,
 				FollowAuth:       true,
 				FollowReferer:    true,
@@ -153,6 +291,40 @@ func TestNew(t *testing.T) {
 			wantErr:       true,
 			expectedError: client.ErrInvalidRedirectLimit,
 		},
+		{
+			name:      "invalid body size limit below sentinel",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				MaxBodySize: -2,
+			},
+			wantErr:       true,
+			expectedError: client.ErrInvalidBodyLimit,
+		},
+		{
+			name:      "invalid timeout below sentinel",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				Timeout: -2,
+			},
+			wantErr:       true,
+			expectedError: client.ErrInvalidTimeout,
+		},
+		{
+			name:      "no timeout sentinel is accepted",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				Timeout: client.NoTimeout,
+			},
+			wantErr: false,
+		},
+		{
+			name:      "no body limit sentinel is accepted",
+			serverURL: "https://candlekeep.faerun",
+			opt: &client.Options{
+				MaxBodySize: client.NoBodyLimit,
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -175,12 +347,16 @@ func TestNew(t *testing.T) {
 			if c.Auth != tt.auth {
 				t.Errorf("New() auth = %v, want %v", c.Auth, tt.auth)
 			}
+			if tt.wantScheme != "" && c.URL.Scheme != tt.wantScheme {
+				t.Errorf("New() scheme = %q, want %q",
+					c.URL.Scheme, tt.wantScheme)
+			}
 		})
 	}
 }
 
 func TestClient_NewChild(t *testing.T) {
-	parent, err := client.New(context.Background(), "https://vault13.wasteland", nil, nil, nil)
+	parent, err := client.New(context.Background(), "https://vault13.wasteland", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create parent client: %v", err)
 	}
@@ -239,9 +415,101 @@ func TestClient_NewChild(t *testing.T) {
 	}
 }
 
-//gocyclo:ignore
-func TestClient_Do(t *testing.T) {
-	// Create test server
+func TestClient_NewChildSegments(t *testing.T) {
+	const base = "https://vault13.wasteland/api"
+
+	parent, err := client.New(context.Background(), base, nil, nil, debugLogger())
+	if err != nil {
+		t.Fatalf("Failed to create parent client: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		give []string
+		want string
+	}{
+		{
+			name: "single literal segment",
+			give: []string{"users"},
+			want: base + "/users",
+		},
+		{
+			name: "segment containing a slash stays one segment",
+			give: []string{"a/b", "tasks"},
+			want: base + "/a%2Fb/tasks",
+		},
+		{
+			name: "parent dots stay a literal segment",
+			give: []string{"..", "x"},
+			want: base + "/%2E%2E/x",
+		},
+		{
+			name: "single dot stays a literal segment",
+			give: []string{"."},
+			want: base + "/%2E",
+		},
+		{
+			name: "pre-escaped input is not double decoded",
+			give: []string{"x%2Fy"},
+			want: base + "/x%252Fy",
+		},
+		{
+			name: "space and unicode are escaped",
+			give: []string{"café corner"},
+			want: base + "/caf%C3%A9%20corner",
+		},
+		{
+			name: "empty segments are dropped",
+			give: []string{"", "v1", ""},
+			want: base + "/v1",
+		},
+		{
+			name: "no segment keeps the parent path",
+			give: nil,
+			want: base,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			child := parent.NewChildSegments(tt.give...)
+			if child == nil {
+				t.Fatal("NewChildSegments() = nil, want a child")
+			}
+			if got := child.URL.String(); got != tt.want {
+				t.Errorf("NewChildSegments(%q) URL = %q, want %q",
+					tt.give, got, tt.want)
+			}
+		})
+	}
+
+	if err := parent.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	if child := parent.NewChildSegments("users"); child != nil {
+		t.Errorf("NewChildSegments() on closed client = %v, want nil", child)
+	}
+}
+
+func TestClient_NewChild_ClosedParent(t *testing.T) {
+	parent, err := client.New(context.Background(),
+		"https://vault13.wasteland", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create parent client: %v", err)
+	}
+
+	if err := parent.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	if child := parent.NewChild("/v1"); child != nil {
+		t.Errorf("NewChild() on closed client = %v, want nil", child)
+	}
+}
+
+// newDoTestServer starts the TLS test server shared by the Do tests.
+func newDoTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/temple":
@@ -270,35 +538,56 @@ func TestClient_Do(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
-	defer ts.Close()
+	t.Cleanup(ts.Close)
 
-	// Create client with TLS config from test server
+	return ts
+}
+
+// newDoTestClient builds a client trusting the Do test server, closed
+// automatically at the end of the test.
+func newDoTestClient(t *testing.T, serverURL string) *client.Client {
+	t.Helper()
+
 	opt := client.OptDefault
 	opt.DisableTLSVerify = true
 	opt.Timeout = 1 * time.Second
-	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+
+	c, err := client.New(context.Background(), serverURL,
+		nil, &opt, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	return &c
+}
+
+func TestClient_Do(t *testing.T) {
+	ts := newDoTestServer(t)
+	c := newDoTestClient(t, ts.URL)
 
 	tests := []struct {
-		name       string
-		path       string
-		method     string
-		query      [2]string
-		body       []byte
-		notFollow  bool
-		response   client.Unmarshaler
-		wantStatus int
-		wantErr    bool
-		wantErrIs  error
+		name        string
+		path        string
+		method      string
+		query       [2]string
+		body        []byte
+		notFollow   bool
+		response    client.Unmarshaler
+		wantStatus  int
+		wantSuccess bool
+		wantMessage string
+		wantErr     bool
+		wantErrIs   error
 	}{
 		{
-			name:       "successful GET",
-			path:       "/temple",
-			method:     http.MethodGet,
-			response:   &mockResponse{},
-			wantStatus: http.StatusOK,
+			name:        "successful GET",
+			path:        "/temple",
+			method:      http.MethodGet,
+			response:    &mockResponse{},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+			wantMessage: "Go, friend, and may Gorion watch over your path",
 		},
 		{
 			name:      "empty method",
@@ -306,40 +595,43 @@ func TestClient_Do(t *testing.T) {
 			wantErrIs: client.ErrInvalidMethod,
 		},
 		{
-			name:       "server error",
+			name:       "server error status is not a call error",
 			path:       "/sarevok",
 			method:     http.MethodGet,
 			wantStatus: http.StatusInternalServerError,
-			wantErr:    true,
 		},
 		{
-			name:       "successful with URL query",
-			path:       "/prophecy",
-			method:     http.MethodGet,
-			query:      [2]string{"bhaalspawn", "child of murder"},
-			wantStatus: http.StatusOK,
+			name:        "successful with URL query",
+			path:        "/prophecy",
+			method:      http.MethodGet,
+			query:       [2]string{"bhaalspawn", "child of murder"},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
 		},
 		{
-			name:       "successful POST with body",
-			path:       "/temple",
-			method:     http.MethodPost,
-			body:       []byte(`{"scroll":"identify"}`),
-			response:   &mockResponse{},
-			wantStatus: http.StatusOK,
+			name:        "successful POST with body",
+			path:        "/temple",
+			method:      http.MethodPost,
+			body:        []byte(`{"scroll":"identify"}`),
+			response:    &mockResponse{},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
 		},
 		{
-			name:       "redirect",
-			path:       "/portal",
-			method:     http.MethodGet,
-			response:   &mockResponse{},
-			wantStatus: http.StatusOK,
+			name:        "redirect",
+			path:        "/portal",
+			method:      http.MethodGet,
+			response:    &mockResponse{},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
 		},
 		{
-			name:       "redirect not accepted",
-			path:       "/portal",
-			method:     http.MethodGet,
-			notFollow:  true,
-			wantStatus: http.StatusTemporaryRedirect,
+			name:        "redirect not accepted",
+			path:        "/portal",
+			method:      http.MethodGet,
+			notFollow:   true,
+			wantStatus:  http.StatusTemporaryRedirect,
+			wantSuccess: true,
 		},
 		{
 			name:      "too many redirects",
@@ -370,101 +662,370 @@ func TestClient_Do(t *testing.T) {
 			}
 
 			resp, err := child.Do(tt.method, tt.body, tt.response)
-			if !tt.wantErr && err != nil {
-				t.Errorf("Do() unexpected error = %v", err)
-				return
-			}
-			if err == nil {
-				if resp == nil && resp.StatusCode < 400 {
-					t.Errorf("Do() expected error but got nil")
-					return
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Do() error = nil, want an error")
 				}
-				// Consider HTTP error status codes as errors for test purposes
-				err = errors.New("HTTP error status codes as errors")
-			}
-			if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
-				t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
+				if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
+					t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
+				}
 				return
 			}
 
-			if !tt.wantErr && resp != nil && resp.StatusCode != tt.wantStatus {
-				t.Errorf("Do() status = %v, want %v\n%#v", resp.StatusCode, tt.wantStatus, resp.Header)
+			if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("Do() status = %v, want %v",
+					resp.StatusCode, tt.wantStatus)
+			}
+			if resp.Success != tt.wantSuccess {
+				t.Errorf("Do() success = %v, want %v",
+					resp.Success, tt.wantSuccess)
+			}
+
+			if tt.wantMessage == "" {
+				return
+			}
+			got, err := client.Result[mockResponse](resp)
+			if err != nil {
+				t.Fatalf("Result() error = %v", err)
+			}
+			if got.Message != tt.wantMessage {
+				t.Errorf("unmarshaled message = %q, want %q",
+					got.Message, tt.wantMessage)
+			}
+		})
+	}
+}
+
+func TestClient_Do_Concurrent(t *testing.T) {
+	ts := newDoTestServer(t)
+	c := newDoTestClient(t, ts.URL)
+
+	const numRequests = 10
+	wg := sync.WaitGroup{}
+	wg.Add(numRequests)
+
+	for range numRequests {
+		go func() {
+			defer wg.Done()
+
+			child := c.NewChild("/temple")
+			resp, err := child.Do(http.MethodGet, nil, &mockResponse{})
+			if err != nil {
+				t.Errorf("Concurrent Do() error = %v", err)
+				return
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("Concurrent Do() status = %v, want %v",
+					resp.StatusCode, http.StatusOK)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestClient_Do_Auth(t *testing.T) {
+	ts := newDoTestServer(t)
+	c := newDoTestClient(t, ts.URL)
+
+	basic, err := auth.NewBasic("minsc", hided.NewString("go-for-the-eyes"))
+	if err != nil {
+		t.Fatalf("NewBasic() error = %v", err)
+	}
+
+	child := c.NewChild("/necropolis")
+	child.Auth = &basic
+
+	resp, err := child.Do(http.MethodGet, nil, nil)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Do() status = %v, want %v", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestClient_Do_RateLimiter(t *testing.T) {
+	ts := newDoTestServer(t)
+	c := newDoTestClient(t, ts.URL)
+
+	child := c.NewChild("/maze")
+	child.Options.Timeout = 1 * time.Minute
+	child.Options.MaxRedirect = 5
+	child.Options.RateLimiter = rate.NewLimiter(rate.Every(time.Second), 1)
+
+	start := time.Now()
+	_, err := child.Do(http.MethodGet, nil, nil)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, client.ErrTooManyRedirects) {
+		t.Errorf("Do() error = %v, want %v", err, client.ErrTooManyRedirects)
+	}
+
+	// Each redirect hop goes through the limiter, one token per second
+	// after the initial burst, so the chain must take measurable time
+	// but no more than one interval per allowed redirect
+	if elapsed < time.Second {
+		t.Errorf("Do() took %v, want at least 1s of rate limiting", elapsed)
+	}
+	if elapsed > time.Duration(child.Options.MaxRedirect)*time.Second {
+		t.Errorf("Do() took %v, want at most %vs",
+			elapsed, child.Options.MaxRedirect)
+	}
+}
+
+func TestClient_Do_Closed(t *testing.T) {
+	ts := newDoTestServer(t)
+	c := newDoTestClient(t, ts.URL)
+
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	res, err := c.Do(http.MethodPost, nil, nil)
+	if res != nil {
+		t.Errorf("Do() on a closed client = %v, want nil", res)
+	}
+	if !errors.Is(err, client.ErrClientClosed) {
+		t.Errorf("Do() error = %v, want %v", err, client.ErrClientClosed)
+	}
+}
+
+// TestClient_Do_SharesAuthenticator pins the authenticator ownership:
+// requests must run Update on the instance the caller handed to New, so
+// state built by one request (a cached token) serves the next ones. A
+// per-request copy would rebuild that state on every single call.
+func TestClient_Do_SharesAuthenticator(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+	defer ts.Close()
+
+	opt := client.OptDefault
+	opt.DisableTLSVerify = true
+
+	counting := &countingAuthenticator{}
+	c, err := client.New(context.Background(), ts.URL, counting, &opt, nil)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+
+	const requests = 3
+	for range requests {
+		resp, err := c.Do(http.MethodGet, nil, nil)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Do() status = %v, want %v",
+				resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	if got := counting.updates.Load(); got != requests {
+		t.Errorf("Update() calls on the caller instance = %d, want %d",
+			got, requests)
+	}
+	if got := counting.fetches.Load(); got != 1 {
+		t.Errorf("token fetches = %d, want 1 "+
+			"(cached state must survive between requests)", got)
+	}
+}
+
+func TestClient_Do_ReusesConnections(t *testing.T) {
+	var mu sync.Mutex
+	remotes := make(map[string]struct{})
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			remotes[r.RemoteAddr] = struct{}{}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"message":"ok"}`))
+		}))
+	defer ts.Close()
+
+	opt := client.OptDefault
+	opt.DisableTLSVerify = true
+
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, debugLogger())
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+
+	const requests = 5
+	for range requests {
+		resp, err := c.Do(http.MethodGet, nil, nil)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Do() status = %v, want %v",
+				resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	if len(remotes) != 1 {
+		t.Errorf("distinct connections for %d sequential requests = %d, "+
+			"want 1 (pooled transport)", requests, len(remotes))
+	}
+}
+
+func TestClient_Do_BodyLimit(t *testing.T) {
+	const bodySize = 1024
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(bytes.Repeat([]byte("a"), bodySize))
+		}))
+	defer ts.Close()
+
+	tests := []struct {
+		name      string
+		giveLimit int64
+		wantErrIs error // nil expects a successful read
+	}{
+		{
+			name:      "zero applies the default limit",
+			giveLimit: 0,
+		},
+		{
+			name:      "explicit no body limit",
+			giveLimit: client.NoBodyLimit,
+		},
+		{
+			name:      "limit above body size",
+			giveLimit: bodySize + 1,
+		},
+		{
+			name:      "limit equal to body size",
+			giveLimit: bodySize,
+		},
+		{
+			name:      "limit below body size",
+			giveLimit: bodySize - 1,
+			wantErrIs: client.ErrBodyTooLarge,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opt := client.Options{
+				DisableTLSVerify: true,
+				Timeout:          5 * time.Second,
+				MaxBodySize:      tt.giveLimit,
+			}
+
+			c, err := client.New(context.Background(), ts.URL,
+				nil, &opt, nil)
+			if err != nil {
+				t.Fatalf("Failed to create client: %v", err)
+			}
+			defer func() {
+				if err := c.Close(); err != nil {
+					t.Errorf("Close() error = %v", err)
+				}
+			}()
+
+			resp, err := c.Do(http.MethodGet, nil, nil)
+			if tt.wantErrIs != nil {
+				if !errors.Is(err, tt.wantErrIs) {
+					t.Errorf("Do() error = %v, want %v", err, tt.wantErrIs)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			if len(resp.Body) != bodySize {
+				t.Errorf("Do() body length = %d, want %d",
+					len(resp.Body), bodySize)
+			}
+		})
+	}
+}
+
+func TestNew_Normalization(t *testing.T) {
+	tests := []struct {
+		name          string
+		give          *client.Options
+		wantTimeout   time.Duration
+		wantBodyLimit int64
+	}{
+		{
+			name:          "nil options uses hardened defaults",
+			give:          nil,
+			wantTimeout:   client.DefaultTimeout,
+			wantBodyLimit: client.DefaultMaxBodySize,
+		},
+		{
+			name:          "zero value applies defaults",
+			give:          &client.Options{},
+			wantTimeout:   client.DefaultTimeout,
+			wantBodyLimit: client.DefaultMaxBodySize,
+		},
+		{
+			name: "sentinels disable the limits",
+			give: &client.Options{
+				Timeout:     client.NoTimeout,
+				MaxBodySize: client.NoBodyLimit,
+			},
+			wantTimeout:   0,
+			wantBodyLimit: 0,
+		},
+		{
+			name: "positive values pass through",
+			give: &client.Options{
+				Timeout:     12 * time.Second,
+				MaxBodySize: 4096,
+			},
+			wantTimeout:   12 * time.Second,
+			wantBodyLimit: 4096,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := client.New(context.Background(),
+				"https://candlekeep.faerun", nil, tt.give, nil)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			defer func() { _ = c.Close() }()
+
+			if c.Options.Timeout != tt.wantTimeout {
+				t.Errorf("Options.Timeout = %v, want %v",
+					c.Options.Timeout, tt.wantTimeout)
+			}
+			if c.Options.MaxBodySize != tt.wantBodyLimit {
+				t.Errorf("Options.MaxBodySize = %d, want %d",
+					c.Options.MaxBodySize, tt.wantBodyLimit)
 			}
 		})
 	}
 
-	// Test concurrent requests
-	t.Run("concurrent requests", func(t *testing.T) {
-		const numRequests = 10
-		wg := sync.WaitGroup{}
-		wg.Add(numRequests)
-
-		for i := 0; i < numRequests; i++ {
-			go func() {
-				defer wg.Done()
-				child := c.NewChild("/temple")
-				resp, err := child.Do(http.MethodGet, nil, &mockResponse{})
-				if err != nil {
-					t.Errorf("Concurrent Do() error = %v", err)
-					return
-				}
-				if resp.StatusCode != http.StatusOK {
-					t.Errorf("Concurrent Do() status = %v, want %v", resp.StatusCode, http.StatusOK)
-				}
-			}()
-		}
-		wg.Wait()
-	})
-
-	t.Run("cAuth request", func(t *testing.T) {
-		basic, _ := auth.NewBasic("minsc", hided.NewString("go-for-the-eyes"))
-		child := c.NewChild("/necropolis")
-		child.Auth = &basic
-
-		resp, err := child.Do(http.MethodGet, nil, nil)
-		if err != nil {
-			t.Errorf("Auth Do() error = %v", err)
-			return
-		}
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Auth Do() status = %v, want %v", resp.StatusCode, http.StatusOK)
-		}
-	})
-
-	t.Run("Rate limiter request", func(t *testing.T) {
-		// Test rate limiter
-		child := c.NewChild("/maze")
-		child.Options.Timeout = 1 * time.Minute
-		child.Options.MaxRedirect = 5
-		child.Options.RateLimiter = rate.NewLimiter(rate.Every(time.Second), 1)
-
-		chronoStart := time.Now()
-		_, err = child.Do(http.MethodGet, nil, nil)
-		if !errors.Is(err, client.ErrTooManyRedirects) {
-			t.Errorf("Do() error = %v, wantErr %v", err, client.ErrTooManyRedirects)
-		}
-		chronoEnd := time.Now()
-		chronoRes := chronoEnd.Sub(chronoStart)
-		if chronoRes > time.Duration(child.Options.MaxRedirect)*time.Second {
-			t.Errorf("Do() expected to take least 10s, took %v\nStart: %v; End: %v", chronoRes, chronoStart, chronoEnd)
-		}
-	})
-
-	t.Run("Close client", func(t *testing.T) {
-		// Verify Do return when closed
-		if clone := c.Close(); clone != nil {
-			t.Errorf("Clone() on closed client = %v, want nil", clone)
-		}
-
-		res, err := c.Do(http.MethodPost, nil, nil)
-		if res != nil {
-			t.Errorf("Do() expect to return nil when Client are closed")
-		}
-
-		if !errors.Is(err, client.ErrClientClosed) {
-			t.Errorf("Do() error = %v, wantErr %v", err, client.ErrClientClosed)
-		}
-	})
+	// The hardened defaults must not leak back into OptDefault
+	if client.OptDefault.Timeout != client.DefaultTimeout {
+		t.Errorf("OptDefault.Timeout mutated to %v", client.OptDefault.Timeout)
+	}
 }
 
 func TestClient_Close(t *testing.T) {
@@ -501,7 +1062,7 @@ func TestClient_Close(t *testing.T) {
 }
 
 func TestClient_FlushHeader(t *testing.T) {
-	c, err := client.New(context.Background(), "https://example.com", nil, nil, nil)
+	c, err := client.New(context.Background(), "https://example.com", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -515,7 +1076,7 @@ func TestClient_FlushHeader(t *testing.T) {
 }
 
 func TestClient_FlushQuery(t *testing.T) {
-	c, err := client.New(context.Background(), "https://example.com", nil, nil, nil)
+	c, err := client.New(context.Background(), "https://example.com", nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -536,7 +1097,7 @@ func TestClient_Clone(t *testing.T) {
 	}
 
 	opt := client.Options{
-		OnlyHTTPS:        true,
+		DisableHTTPS:     false,
 		Follow:           true,
 		FollowAuth:       true,
 		MaxRedirect:      5,
@@ -596,6 +1157,84 @@ func TestClient_Clone(t *testing.T) {
 	}
 }
 
+// TestClient_NewChildCloseRace hammers NewChild against a concurrent
+// Close of the parent. A child must be fully built before it is
+// published to the parent closer list, otherwise the closing cascade
+// reaches a child whose URL is still being written. The logger stays at
+// info level on purpose: the race is structural, not a debug artifact.
+// Meaningful under -race.
+func TestClient_NewChildCloseRace(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard,
+		&slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	for range 200 {
+		c, err := client.New(context.Background(),
+			"https://vault13.wasteland", nil, nil, logger)
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		wg := sync.WaitGroup{}
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for range 40 {
+				if child := c.NewChild("/vault/door"); child == nil {
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := c.Close(); err != nil {
+				t.Errorf("Close() error = %v", err)
+			}
+		}()
+
+		wg.Wait()
+	}
+}
+
+// TestClient_CloneCloseRace runs Clone against a concurrent Close: every
+// clone handed out must be closed in cascade, none may end up orphaned.
+func TestClient_CloneCloseRace(t *testing.T) {
+	c, err := client.New(context.Background(),
+		"https://vault13.wasteland", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	const goroutines = 32
+	clones := make([]*client.Client, goroutines)
+	start := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			clones[i] = c.Clone()
+		}(i)
+	}
+
+	close(start)
+	if err := c.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+	wg.Wait()
+
+	for i, clone := range clones {
+		if clone == nil {
+			continue
+		}
+		if !clone.IsClosed() {
+			t.Errorf("clone %d survived the parent Close", i)
+		}
+	}
+}
+
 type testMarshaler struct {
 	Message string `json:"message"`
 }
@@ -621,7 +1260,7 @@ func TestClient_DoWithMarshal(t *testing.T) {
 	// Create client
 	opt := client.OptDefault
 	opt.DisableTLSVerify = true
-	c, err := client.New(context.Background(), ts.URL, nil, &opt, nil)
+	c, err := client.New(context.Background(), ts.URL, nil, &opt, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -683,7 +1322,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 		testToken   = "NCR-Ranger-Token"
 	)
 
-	c, err := client.New(context.Background(), baseURL, nil, nil, nil)
+	c, err := client.New(context.Background(), baseURL, nil, nil, debugLogger())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -746,12 +1385,39 @@ func TestClient_FollowRedirects(t *testing.T) {
 			expectedAuth:  testToken, // header should be preserved
 		},
 
+		// Scheme downgrade cases
+		{
+			name: "strip auth on https to http downgrade",
+			setup: func(c *client.Client) {
+				c.Options.Follow = true
+				c.Options.DisableHTTPS = true
+				c.Options.FollowAuth = true
+			},
+			checkTrace:     true,
+			requestURL:     "http://new-reno.wasteland" + redirectURL,
+			addAuthHeader:  true,
+			expectedScheme: "http",
+			expectedAuth:   "", // credentials must not travel in cleartext
+		},
+		{
+			name: "keep auth when https enforcement re-upgrades the redirect",
+			setup: func(c *client.Client) {
+				c.Options.Follow = true
+				c.Options.DisableHTTPS = false
+			},
+			checkTrace:     true,
+			requestURL:     "http://new-reno.wasteland" + redirectURL,
+			addAuthHeader:  true,
+			expectedScheme: "https",
+			expectedAuth:   testToken, // no cleartext hop, no strip
+		},
+
 		// URL scheme cases
 		{
 			name: "enforce HTTPS on HTTP URL",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = true
+				c.Options.DisableHTTPS = false
 			},
 			checkTrace:     true,
 			requestURL:     "http://gecko.wasteland" + redirectURL,
@@ -761,7 +1427,7 @@ func TestClient_FollowRedirects(t *testing.T) {
 			name: "keep HTTP URL as is",
 			setup: func(c *client.Client) {
 				c.Options.Follow = true
-				c.Options.OnlyHTTPS = false
+				c.Options.DisableHTTPS = true
 			},
 			checkTrace:     true,
 			requestURL:     "http://gecko.wasteland" + redirectURL,

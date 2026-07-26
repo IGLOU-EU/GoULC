@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/gitlab.com/iglou.eu/goulc/wildcard.svg)](https://pkg.go.dev/gitlab.com/iglou.eu/goulc/wildcard)
 
-A simple and fast wildcard pattern matching for Go. Regex is much more complex and slower (even when prepared), and `filepath.Match` is file-name-centric. This package is a very fast and very simple alternative to regex, not tied to filename semantics, with no dependencies and allocation-free for the byte path. 🥳
+A simple and fast wildcard pattern matching for Go. Regex is much more complex and slower (even when prepared), and `filepath.Match` is file-name-centric. This package is a very fast and very simple alternative to regex, not tied to filename semantics, with no dependencies and allocation-free for the byte path in the common case (see [Semantics](#-semantics) for the single exception). 🥳
 
 ## 🎯 Features
 
@@ -13,9 +13,17 @@ A simple and fast wildcard pattern matching for Go. Regex is much more complex a
   - Any other character must match itself
 
 - **🛠️ API Variants:**
-  - `Match(pattern, s string) bool` — fastest, compares byte by byte, no allocation.
-  - `MatchFromByte(pattern, s []byte) bool` — same byte-wise semantics for `[]byte` inputs, skips the string conversion.
-  - `MatchByRune(pattern, s string) bool` — compares rune by rune; slower and the `[]rune` conversion allocates, but operators apply to whole Unicode code points.
+  - `Match(pattern, s string) bool`: fastest, compares byte by byte, no allocation in the common case.
+  - `MatchFromByte(pattern, s []byte) bool`: same byte-wise semantics for `[]byte` inputs, skips the string conversion.
+  - `MatchByRune(pattern, s string) bool`: compares rune by rune. Slower and the `[]rune` conversion allocates, but operators apply to whole Unicode code points.
+
+## 🧭 Semantics
+
+- Matching is **anchored**: the whole input is compared against the whole pattern, there is no substring search.
+- `?` is a true **zero or one**: both readings are explored, so `a?b` matches `ab` as well as `axb`, wherever the `?` sits.
+- `Match` and `MatchFromByte` operate on **bytes**: a multi-byte UTF-8 character counts as several bytes, so `.` does not match an emoji. `MatchByRune` operates on code points instead, and decodes invalid UTF-8 bytes as U+FFFD, which makes two distinct invalid bytes compare as equal.
+- Worst-case cost is **O(len(pattern) × len(s))** and adversarial inputs reach it (for instance `*` followed by a long literal tail). Bound both lengths before matching when the pattern and the input are both untrusted.
+- The byte path never allocates, except for patterns longer than 63 bytes that contain `?`.
 
 > ⚠️ **WARNING:** Unlike the GNU "libc", this library has no equivalent to `FNM_FILE_NAME`. For filename matching, use [`path/filepath`](https://pkg.go.dev/path/filepath#Match).
 
@@ -63,7 +71,7 @@ The tested functions are:
 
 Originally, this library was a fork from the Minio project, released as [`github.com/IGLOU-EU/go-wildcard`](https://github.com/IGLOU-EU/go-wildcard) under the Apache License 2.0. The goal of the fork was to keep a usable Apache-licensed version after [MinIO migrated to GNU AGPL 3.0](https://github.com/minio/minio/commit/069432566fcfac1f1053677cc925ddafd750730a). The original MinIO wildcard matching code can still be found in [`minio/pkg/wildcard`](https://github.com/minio/pkg/tree/main/wildcard).
 
-The fork was then rewritten end-to-end and switched to the **BSD 3-Clause** license, with the byte-wise, allocation-free `Match` / `MatchFromByte` / `MatchByRune` implementation generated from a single `source/` template via `go generate`.
+The fork was then rewritten end-to-end and switched to the **BSD 3-Clause** license, with the byte-wise, allocation-free `Match` / `MatchFromByte` / `MatchByRune` implementation generated from a single template via `go generate`. The generated matchers have since been merged into a single generic implementation (plus a hand-written rune variant), and the code generator is gone.
 
 It now lives here as a subpackage of [GoULC](../README.md) and is **relicensed under LGPL-3.0-or-later** to align with the rest of the collection. The MinIO-derived implementation is preserved in [`benchmark/old_wildcard_test.go`](./benchmark/old_wildcard_test.go) under its original Apache 2.0 header for comparison only — it is not part of the public API.
 

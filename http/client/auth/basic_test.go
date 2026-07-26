@@ -74,6 +74,30 @@ func TestBasic_Header(t *testing.T) {
 	}
 }
 
+func TestBasic_Header_WithoutConstructor(t *testing.T) {
+	// An instance built without NewBasic has no precomputed header and
+	// must still produce the same value as a constructed one.
+	basic := &auth.Basic{
+		UserID:   "testuser",
+		Password: hided.NewString("testpass"),
+	}
+
+	name, value, err := basic.Header(http.MethodGet, nil, nil)
+	if err != nil {
+		t.Errorf("Basic.Header() unexpected error = %v", err)
+		return
+	}
+
+	if name != auth.BasicHeaderName {
+		t.Errorf("Basic.Header() name = %v, want %v", name, auth.BasicHeaderName)
+	}
+
+	expectedValue := auth.BasicValuePrefix + auth.BasicUserPass("testuser", "testpass")
+	if value != expectedValue {
+		t.Errorf("Basic.Header() value = %v, want %v", value, expectedValue)
+	}
+}
+
 func TestBasic_Clone(t *testing.T) {
 	original, _ := auth.NewBasic("testuser", hided.NewString("testpass"))
 	cloned := original.Clone()
@@ -89,6 +113,13 @@ func TestBasic_Clone(t *testing.T) {
 	}
 	if original.Password.Value() != cloned.(*auth.Basic).Password.Value() {
 		t.Errorf("Clone() Password = %v, want %v", cloned.(*auth.Basic).Password, original.Password)
+	}
+
+	// The precomputed header must survive the copy
+	_, wantValue, _ := original.Header(http.MethodGet, nil, nil)
+	_, gotValue, _ := cloned.Header(http.MethodGet, nil, nil)
+	if gotValue != wantValue {
+		t.Errorf("Clone() Header value = %v, want %v", gotValue, wantValue)
 	}
 }
 

@@ -61,8 +61,8 @@ func TestNewGormLogger(t *testing.T) {
 	if gl == nil {
 		t.Fatal("NewGormLogger returned nil")
 	}
-	if gl.Logger == nil {
-		t.Fatal("NewGormLogger embedded Logger is nil")
+	if gl.log == nil {
+		t.Fatal("NewGormLogger internal logger is nil")
 	}
 }
 
@@ -226,9 +226,19 @@ func TestGormLogger_ParamsFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gl, _ := newTestGormLogger()
+			give := append([]any(nil), tt.params...)
 			gotSQL, gotParams := gl.ParamsFilter(
-				context.Background(), tt.sql, tt.params...,
+				context.Background(), tt.sql, give...,
 			)
+
+			// GORM may reuse the params slice for rebind or retry, so
+			// the filter must never mutate the caller's values.
+			for i := range give {
+				if give[i] != tt.params[i] {
+					t.Errorf("caller params[%d] mutated: got %#v, want %#v",
+						i, give[i], tt.params[i])
+				}
+			}
 
 			if gotSQL != tt.wantSQL {
 				t.Errorf("SQL = %q, want %q", gotSQL, tt.wantSQL)

@@ -1,26 +1,85 @@
 package auth_test
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
+	"gitlab.com/iglou.eu/goulc/hided"
 	"gitlab.com/iglou.eu/goulc/http/client/auth"
 )
+
+// RFC 7616 section 3.9.1 example values.
+// https://www.rfc-editor.org/rfc/rfc7616#section-3.9.1
+const (
+	rfcUser   = "Mufasa"
+	rfcPass   = "Circle of Life"
+	rfcRealm  = "http-auth@example.org"
+	rfcURI    = "/dir/index.html"
+	rfcNonce  = "7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v"
+	rfcCNonce = "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"
+	rfcNC     = "00000001"
+	rfcOpaque = "FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS"
+
+	rfcMD5Response    = "8ca523f5e9506fed4657c9700eebdbec"
+	rfcSHA256Response = "753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1"
+
+	// Same credentials without qop (RFC 2069 compatibility mode), value
+	// computed independently from the implementation.
+	rfcNoQOPMD5Response = "7b2cc3b30e75b4777ea31027084363fd"
+)
+
+// RFC 7616 section 3.9.2 example values. The response and userhash values
+// come from errata 4897: the ones printed in the RFC do not match a
+// FIPS 180-4 SHA-512/256 computation.
+// https://www.rfc-editor.org/rfc/rfc7616#section-3.9.2
+// https://www.rfc-editor.org/errata/eid4897
+const (
+	rfcUTF8User     = "Jäsøn Doe"
+	rfcUTF8Pass     = "Secret, or not?"
+	rfcUTF8Realm    = "api@example.org"
+	rfcUTF8URI      = "/doe.json"
+	rfcUTF8Nonce    = "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK"
+	rfcUTF8CNonce   = "NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v"
+	rfcUTF8Opaque   = "HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS"
+	rfcUTF8Response = "3798d4131c277846293534c3edc11bd8a5e4cdcbff78b05db9d95eeb1cec68a5"
+	rfcUTF8UserHash = "793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b"
+	rfcUTF8UserEnc  = "UTF-8''J%C3%A4s%C3%B8n%20Doe"
+)
+
+// rfcDigest returns a Digest loaded with the RFC 7616 section 3.9.1
+// example values for the given algorithm.
+func rfcDigest(algo auth.DigestAlgo) *auth.Digest {
+	return &auth.Digest{
+		Username: rfcUser,
+		Password: hided.NewString(rfcPass),
+		Parameters: auth.DigestParameters{
+			Algorithm: algo,
+			Realm:     rfcRealm,
+			URI:       rfcURI,
+			QOP:       auth.DigestQOPAuth,
+			Nonce:     rfcNonce,
+			CNonce:    rfcCNonce,
+			NC:        rfcNC,
+			Opaque:    rfcOpaque,
+		},
+	}
+}
 
 func TestNewDigest(t *testing.T) {
 	tests := []struct {
 		name       string
 		username   string
-		password   string
+		password   hided.String
 		parameters auth.DigestParameters
 		wantErr    error
 	}{
 		{
 			name:     "Valid digest",
 			username: "Mufasa",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "testrealm@host.com",
@@ -32,7 +91,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Empty username",
 			username: "",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "testrealm@host.com",
@@ -44,7 +103,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Empty password",
 			username: "Mufasa",
-			password: "",
+			password: hided.NewString(""),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "testrealm@host.com",
@@ -56,7 +115,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Invalid algorithm",
 			username: "Mufasa",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: "invalid",
 				Realm:     "testrealm@host.com",
@@ -68,7 +127,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Empty realm",
 			username: "Mufasa",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "",
@@ -80,7 +139,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Empty nonce",
 			username: "Mufasa",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "testrealm@host.com",
@@ -92,7 +151,7 @@ func TestNewDigest(t *testing.T) {
 		{
 			name:     "Empty URI",
 			username: "Mufasa",
-			password: "Circle of Life",
+			password: hided.NewString("Circle of Life"),
 			parameters: auth.DigestParameters{
 				Algorithm: auth.DigestMD5,
 				Realm:     "testrealm@host.com",
@@ -120,20 +179,11 @@ func TestNewDigest(t *testing.T) {
 			if got.Username != tt.username {
 				t.Errorf("NewDigest().Username = %v, want %v", got.Username, tt.username)
 			}
-			if got.Password != tt.password {
+			if got.Password.Reveal() != tt.password.Reveal() {
 				t.Errorf("NewDigest().Password = %v, want %v", got.Password, tt.password)
 			}
-			if got.Parameters.Algorithm != tt.parameters.Algorithm {
-				t.Errorf("NewDigest().Parameters.Algorithm = %v, want %v", got.Parameters.Algorithm, tt.parameters.Algorithm)
-			}
-			if got.Parameters.Realm != tt.parameters.Realm {
-				t.Errorf("NewDigest().Parameters.Realm = %v, want %v", got.Parameters.Realm, tt.parameters.Realm)
-			}
-			if got.Parameters.URI != tt.parameters.URI {
-				t.Errorf("NewDigest().Parameters.URI = %v, want %v", got.Parameters.URI, tt.parameters.URI)
-			}
-			if got.Parameters.Nonce != tt.parameters.Nonce {
-				t.Errorf("NewDigest().Parameters.Nonce = %v, want %v", got.Parameters.Nonce, tt.parameters.Nonce)
+			if got.Parameters != tt.parameters {
+				t.Errorf("NewDigest().Parameters = %+v, want %+v", got.Parameters, tt.parameters)
 			}
 		})
 	}
@@ -156,7 +206,7 @@ func TestDigest_Update(_ *testing.T) {
 func TestDigest_Clone(t *testing.T) {
 	original := &auth.Digest{
 		Username: "testuser",
-		Password: "testpass",
+		Password: hided.NewString("testpass"),
 		Parameters: auth.DigestParameters{
 			Algorithm: auth.DigestSHA256,
 			Realm:     "testrealm",
@@ -173,17 +223,23 @@ func TestDigest_Clone(t *testing.T) {
 	cloned := original.Clone()
 
 	// Check if the cloned instance is a different pointer
-	if original == cloned.(*auth.Digest) {
+	d, ok := cloned.(*auth.Digest)
+	if !ok {
+		t.Fatalf("Clone() returned %T, want *auth.Digest", cloned)
+	}
+	if original == d {
 		t.Error("Clone() returned same pointer instead of new instance")
 	}
 
 	// Check if all values are the same
-	d := cloned.(*auth.Digest)
-	if &d == &original {
-		t.Errorf("Clone() returned same pointer instead of new instance\nOriginal: %v\nCloned: %v", &original, &d)
+	if d.Username != original.Username {
+		t.Errorf("Clone().Username = %v, want %v", d.Username, original.Username)
 	}
-	if *d != *original {
-		t.Errorf("Clone() didn't return a complete copy of the original instance\nOriginal: %v\nCloned: %v", *original, *d)
+	if d.Password.Reveal() != original.Password.Reveal() {
+		t.Errorf("Clone().Password = %v, want %v", d.Password, original.Password)
+	}
+	if d.Parameters != original.Parameters {
+		t.Errorf("Clone().Parameters = %+v, want %+v", d.Parameters, original.Parameters)
 	}
 }
 
@@ -192,61 +248,72 @@ func TestDigestParameters_Hash(t *testing.T) {
 	tests := []struct {
 		name      string
 		algorithm auth.DigestAlgo
-		wantLen   int // Expected length of the hash in characters (hex encoded)
+		want      string
+		wantErr   error
 	}{
 		{
 			name:      "MD5",
 			algorithm: auth.DigestMD5,
-			wantLen:   32, // MD5 hash is 16 bytes = 32 hex chars
+			want:      "eb733a00c0c9d336e65691a37ab54293",
 		},
 		{
 			name:      "MD5-SESS",
 			algorithm: auth.DigestMD5SESS,
-			wantLen:   32,
+			want:      "eb733a00c0c9d336e65691a37ab54293",
 		},
 		{
 			name:      "SHA-256",
 			algorithm: auth.DigestSHA256,
-			wantLen:   64, // SHA-256 hash is 32 bytes = 64 hex chars
+			want:      "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9",
 		},
 		{
 			name:      "SHA-256-SESS",
 			algorithm: auth.DigestSHA256SESS,
-			wantLen:   64,
+			want:      "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9",
 		},
 		{
 			name:      "SHA-512",
 			algorithm: auth.DigestSHA512,
-			wantLen:   128, // SHA-512 hash is 64 bytes = 128 hex chars
+			want:      "0e1e21ecf105ec853d24d728867ad70613c21663a4693074b2a3619c1bd39d66b588c33723bb466c72424e80e3ca63c249078ab347bab9428500e7ee43059d0d",
 		},
 		{
 			name:      "SHA-512-SESS",
 			algorithm: auth.DigestSHA512SESS,
-			wantLen:   128,
+			want:      "0e1e21ecf105ec853d24d728867ad70613c21663a4693074b2a3619c1bd39d66b588c33723bb466c72424e80e3ca63c249078ab347bab9428500e7ee43059d0d",
 		},
 		{
 			name:      "SHA-512-256",
 			algorithm: auth.DigestSHA512256,
-			wantLen:   64, // SHA-512/256 hash is 32 bytes = 64 hex chars
+			want:      "9fe875600168548c1954aed4f03974ce06b3e17f03a70980190da2d7ef937a43",
 		},
 		{
 			name:      "SHA-512-256-SESS",
 			algorithm: auth.DigestSHA512256SESS,
-			wantLen:   64,
+			want:      "9fe875600168548c1954aed4f03974ce06b3e17f03a70980190da2d7ef937a43",
 		},
 		{
 			name:      "Unknown algorithm",
 			algorithm: "invalid",
-			wantLen:   len(auth.ErrUnknownAlgorithm.Error()),
+			want:      "",
+			wantErr:   auth.ErrUnknownAlgorithm,
+		},
+		{
+			name:      "Empty algorithm",
+			algorithm: "",
+			want:      "",
+			wantErr:   auth.ErrUnknownAlgorithm,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &auth.DigestParameters{Algorithm: tt.algorithm}
-			got := d.Hash(testData)
-			if len(got) != tt.wantLen {
-				t.Errorf("Hash() length = %v, want %v", len(got), tt.wantLen)
+			got, err := d.Hash(testData)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Hash() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Hash() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -254,27 +321,21 @@ func TestDigestParameters_Hash(t *testing.T) {
 
 func TestDigest_A1(t *testing.T) {
 	tests := []struct {
-		name     string
-		digest   *auth.Digest
-		wantHash bool
+		name    string
+		digest  *auth.Digest
+		want    string
+		wantErr error
 	}{
 		{
-			name: "Basic A1",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestMD5,
-					Realm:     "testrealm@host.com",
-				},
-			},
-			wantHash: true,
+			name:   "Basic A1",
+			digest: rfcDigest(auth.DigestMD5),
+			want:   rfcUser + ":" + rfcRealm + ":" + rfcPass,
 		},
 		{
 			name: "Session A1",
 			digest: &auth.Digest{
 				Username: "Mufasa",
-				Password: "Circle of Life",
+				Password: hided.NewString("Circle of Life"),
 				Parameters: auth.DigestParameters{
 					Algorithm: auth.DigestMD5SESS,
 					Realm:     "testrealm@host.com",
@@ -282,28 +343,35 @@ func TestDigest_A1(t *testing.T) {
 					CNonce:    "cnonce",
 				},
 			},
-			wantHash: true,
+			// md5("Mufasa:testrealm@host.com:Circle of Life") joined with
+			// the nonce and cnonce values.
+			want: "7650d211d93fae2c3f56cdb1f1af23b2:nonce:cnonce",
 		},
 		{
-			name: "UserHash A1",
+			name: "Session A1 with unknown algorithm",
 			digest: &auth.Digest{
-				Username: "Müfasa",
-				Password: "Circle of Life",
+				Username: "Mufasa",
+				Password: hided.NewString("Circle of Life"),
 				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256,
+					Algorithm: "invalid-sess",
 					Realm:     "testrealm@host.com",
-					UserHash:  true,
+					Nonce:     "nonce",
+					CNonce:    "cnonce",
 				},
 			},
-			wantHash: true,
+			want:    "",
+			wantErr: auth.ErrUnknownAlgorithm,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.digest.A1()
-			if (got != "") != tt.wantHash {
-				t.Errorf("A1() = %v, want hash: %v", got, tt.wantHash)
+			got, err := tt.digest.A1()
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("A1() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("A1() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -311,11 +379,12 @@ func TestDigest_A1(t *testing.T) {
 
 func TestDigest_A2(t *testing.T) {
 	tests := []struct {
-		name     string
-		digest   *auth.Digest
-		method   string
-		body     []byte
-		wantHash bool
+		name    string
+		digest  *auth.Digest
+		method  string
+		body    []byte
+		want    string
+		wantErr error
 	}{
 		{
 			name: "Basic A2",
@@ -325,8 +394,8 @@ func TestDigest_A2(t *testing.T) {
 					URI:       "/dir/index.html",
 				},
 			},
-			method:   http.MethodGet,
-			wantHash: true,
+			method: http.MethodGet,
+			want:   "GET:/dir/index.html",
 		},
 		{
 			name: "A2 with auth-int",
@@ -337,63 +406,99 @@ func TestDigest_A2(t *testing.T) {
 					QOP:       "auth-int",
 				},
 			},
-			method:   http.MethodPost,
-			body:     []byte("test body"),
-			wantHash: true,
+			method: http.MethodPost,
+			body:   []byte("test body"),
+			// sha256("test body") appended to the method and URI.
+			want: "POST:/dir/index.html:" +
+				"63efb315ed71cc7e5a1fc202434bb3aec2091e7838707e148a017faebb7464fe",
+		},
+		{
+			name: "A2 with auth-int and unknown algorithm",
+			digest: &auth.Digest{
+				Parameters: auth.DigestParameters{
+					Algorithm: "invalid",
+					URI:       "/dir/index.html",
+					QOP:       "auth-int",
+				},
+			},
+			method:  http.MethodPost,
+			body:    []byte("test body"),
+			want:    "",
+			wantErr: auth.ErrUnknownAlgorithm,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.digest.A2(tt.method, tt.body)
-			if (got != "") != tt.wantHash {
-				t.Errorf("A2() = %v, want hash: %v", got, tt.wantHash)
+			got, err := tt.digest.A2(tt.method, tt.body)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("A2() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("A2() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestDigest_Response(t *testing.T) {
+	noQOP := rfcDigest(auth.DigestMD5)
+	noQOP.Parameters.QOP = ""
+	noQOP.Parameters.CNonce = ""
+	noQOP.Parameters.NC = ""
+
 	tests := []struct {
-		name   string
-		digest *auth.Digest
-		A1     string
-		A2     string
-		want   string
+		name    string
+		digest  *auth.Digest
+		a1      string
+		a2      string
+		want    string
+		wantErr error
 	}{
 		{
-			name: "Response without QOP",
-			digest: &auth.Digest{
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestMD5,
-					Nonce:     "nonce",
-				},
-			},
-			A1:   "a1hash",
-			A2:   "a2hash",
-			want: "response",
+			name:   "RFC 7616 vector with qop and MD5",
+			digest: rfcDigest(auth.DigestMD5),
+			a1:     rfcUser + ":" + rfcRealm + ":" + rfcPass,
+			a2:     "GET:" + rfcURI,
+			want:   rfcMD5Response,
 		},
 		{
-			name: "Response with QOP",
+			name:   "RFC 7616 vector with qop and SHA-256",
+			digest: rfcDigest(auth.DigestSHA256),
+			a1:     rfcUser + ":" + rfcRealm + ":" + rfcPass,
+			a2:     "GET:" + rfcURI,
+			want:   rfcSHA256Response,
+		},
+		{
+			name:   "Without qop, RFC 2069 compatibility",
+			digest: noQOP,
+			a1:     rfcUser + ":" + rfcRealm + ":" + rfcPass,
+			a2:     "GET:" + rfcURI,
+			want:   rfcNoQOPMD5Response,
+		},
+		{
+			name: "Unknown algorithm",
 			digest: &auth.Digest{
 				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256,
+					Algorithm: "invalid",
 					Nonce:     "nonce",
-					QOP:       "auth",
-					CNonce:    "cnonce",
-					NC:        "00000001",
 				},
 			},
-			A1:   "a1hash",
-			A2:   "a2hash",
-			want: "response",
+			a1:      "a1",
+			a2:      "a2",
+			want:    "",
+			wantErr: auth.ErrUnknownAlgorithm,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.digest.Response(tt.A1, tt.A2); got == "" {
-				t.Error("Response() returned empty string")
+			got, err := tt.digest.Response(tt.a1, tt.a2)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Response() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Response() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -401,177 +506,219 @@ func TestDigest_Response(t *testing.T) {
 
 //gocyclo:ignore
 func TestDigest_Header(t *testing.T) {
+	noQOP := rfcDigest(auth.DigestMD5)
+	noQOP.Parameters.QOP = ""
+	noQOP.Parameters.CNonce = ""
+	noQOP.Parameters.NC = ""
+
+	utf8Digest := func(userHash bool) *auth.Digest {
+		return &auth.Digest{
+			Username: rfcUTF8User,
+			Password: hided.NewString(rfcUTF8Pass),
+			Parameters: auth.DigestParameters{
+				Algorithm: auth.DigestSHA512256,
+				Realm:     rfcUTF8Realm,
+				URI:       rfcUTF8URI,
+				QOP:       auth.DigestQOPAuth,
+				Nonce:     rfcUTF8Nonce,
+				CNonce:    rfcUTF8CNonce,
+				NC:        rfcNC,
+				Opaque:    rfcUTF8Opaque,
+				UserHash:  userHash,
+			},
+		}
+	}
+
 	tests := []struct {
-		name       string
-		digest     *auth.Digest
-		method     string
-		url        *url.URL
-		body       []byte
-		wantHeader string
-		wantErr    bool
-		utf8       bool
+		name         string
+		digest       *auth.Digest
+		method       string
+		body         []byte
+		wantResponse string
+		wantUsername string
 	}{
 		{
-			name: "Basic auth header without qop",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestMD5,
-					Realm:     "testrealm@host.com",
-					URI:       "/dir/index.html",
-					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-					UserHash:  false,
-				},
-			},
-			method: http.MethodGet,
-			url:    &url.URL{Path: "/dir/index.html"},
-			body:   nil,
+			name:         "RFC 7616 3.9.1 with MD5",
+			digest:       rfcDigest(auth.DigestMD5),
+			method:       http.MethodGet,
+			wantResponse: `response="` + rfcMD5Response + `"`,
+			wantUsername: `username="` + rfcUser + `"`,
 		},
 		{
-			name: "Basic auth header sess without qop",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256SESS,
-					Realm:     "testrealm@host.com",
-					URI:       "/dir/index.html",
-					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-					UserHash:  false,
-				},
-			},
-			method: http.MethodGet,
-			url:    &url.URL{Path: "/dir/index.html"},
-			body:   nil,
+			name:         "RFC 7616 3.9.1 with SHA-256",
+			digest:       rfcDigest(auth.DigestSHA256),
+			method:       http.MethodGet,
+			wantResponse: `response="` + rfcSHA256Response + `"`,
+			wantUsername: `username="` + rfcUser + `"`,
 		},
 		{
-			name: "Basic auth header with Opaque",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256,
-					Realm:     "testrealm@host.com",
-					URI:       "/dir/index.html",
-					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-					UserHash:  false,
-					Opaque:    "0a4f113b",
-				},
-			},
-			method: http.MethodGet,
-			url:    &url.URL{Path: "/dir/index.html"},
-			body:   nil,
+			name:         "RFC 7616 3.9.2 with SHA-512-256 and userhash",
+			digest:       utf8Digest(true),
+			method:       http.MethodGet,
+			wantResponse: `response="` + rfcUTF8Response + `"`,
+			wantUsername: `username="` + rfcUTF8UserHash + `"`,
 		},
 		{
-			name: "Auth header with qop=auth",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestMD5,
-					Realm:     "testrealm@host.com",
-					URI:       "/dir/index.html",
-					QOP:       "auth",
-					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-					CNonce:    "0a4f113b",
-					NC:        "00000001",
-					UserHash:  false,
-				},
-			},
-			method: http.MethodGet,
-			url:    &url.URL{Path: "/dir/index.html"},
-			body:   nil,
+			name:         "RFC 7616 3.9.2 with SHA-512-256 and username*",
+			digest:       utf8Digest(false),
+			method:       http.MethodGet,
+			wantResponse: `response="` + rfcUTF8Response + `"`,
+			wantUsername: `username*=` + rfcUTF8UserEnc,
 		},
 		{
-			name: "Auth header with qop=auth-int",
-			digest: &auth.Digest{
-				Username: "Mufasa",
-				Password: "Circle of Life",
-				Parameters: auth.DigestParameters{
-					Algorithm: auth.DigestSHA256,
-					Realm:     "testrealm@host.com",
-					URI:       "/dir/index.html",
-					QOP:       "auth-int",
-					Nonce:     "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-					CNonce:    "0a4f113b",
-					NC:        "00000001",
-					UserHash:  true,
-				},
-			},
-			method: http.MethodPost,
-			url:    &url.URL{Path: "/dir/index.html"},
-			body:   []byte("test body"),
+			name:         "Without qop, RFC 2069 compatibility",
+			digest:       noQOP,
+			method:       http.MethodGet,
+			wantResponse: `response="` + rfcNoQOPMD5Response + `"`,
+			wantUsername: `username="` + rfcUser + `"`,
 		},
 		{
-			name: "Non-ASCII username",
+			name: "Username with DEL goes through extended encoding",
 			digest: &auth.Digest{
-				Username: "测试用户", // Chinese characters
-				Password: "testpass",
+				// DEL (0x7f) is a control character, not printable ASCII,
+				// so the username must not be sent in the plain form.
+				Username: "del\x7fuser",
+				Password: hided.NewString("testpass"),
 				Parameters: auth.DigestParameters{
 					Algorithm: auth.DigestSHA256,
 					Realm:     "testrealm",
 					URI:       "/test",
-					UserHash:  false,
+					Nonce:     "testnonce",
 				},
 			},
-			method: http.MethodGet,
-			url:    &url.URL{Path: "/test"},
-			body:   nil,
-			utf8:   true,
+			method:       http.MethodGet,
+			wantUsername: `username*=UTF-8''del%7Fuser`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			headerName, headerValue, err := tt.digest.Header(tt.method, tt.url, tt.body)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Header() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			headerName, headerValue, err := tt.digest.Header(
+				tt.method, &url.URL{Path: tt.digest.Parameters.URI}, tt.body)
+			if err != nil {
+				t.Fatalf("Header() error = %v", err)
 			}
 
 			if headerName != auth.DigestHeaderName {
 				t.Errorf("Header() name = %v, want %v", headerName, auth.DigestHeaderName)
 			}
-
 			if !strings.HasPrefix(headerValue, auth.DigestValuePrefix) {
-				t.Errorf("Header() value prefix = %v, want prefix %v", headerValue, auth.DigestValuePrefix)
+				t.Errorf("Header() value = %v, want prefix %v", headerValue, auth.DigestValuePrefix)
 			}
 
-			// Check required fields are present
-			requiredFields := []string{
-				`uri="`,
-				`algorithm=`,
-				`response="`,
-				`userhash=`,
+			if tt.wantResponse != "" && !strings.Contains(headerValue, tt.wantResponse) {
+				t.Errorf("Header() value = %v, want it to contain %v", headerValue, tt.wantResponse)
+			}
+			if !strings.Contains(headerValue, tt.wantUsername) {
+				t.Errorf("Header() value = %v, want it to contain %v", headerValue, tt.wantUsername)
 			}
 
-			for _, field := range requiredFields {
-				if !strings.Contains(headerValue, field) {
-					t.Errorf("Header() value missing required field %q", field)
-				}
+			p := tt.digest.Parameters
+			if !strings.Contains(headerValue, `uri="`+p.URI+`"`) {
+				t.Errorf("Header() value missing URI field")
 			}
-
-			if tt.utf8 && !strings.Contains(headerValue, `username*=UTF-8`) {
-				t.Errorf("Header() value missing username*=UTF-8 field for UTF-8 username")
-			}
-			if tt.digest.Parameters.Realm != "" && !strings.Contains(headerValue, `realm="`+tt.digest.Parameters.Realm+`"`) {
+			if !strings.Contains(headerValue, `realm="`+p.Realm+`"`) {
 				t.Errorf("Header() value missing Realm field")
 			}
-			if tt.digest.Parameters.Nonce != "" && !strings.Contains(headerValue, `nonce="`+tt.digest.Parameters.Nonce+`"`) {
+			if !strings.Contains(headerValue, `nonce="`+p.Nonce+`"`) {
 				t.Errorf("Header() value missing Nonce field")
 			}
-			if tt.digest.Parameters.QOP != "" && !strings.Contains(headerValue, `qop=`+tt.digest.Parameters.QOP) {
+			if p.QOP != "" && !strings.Contains(headerValue, `qop=`+p.QOP) {
 				t.Errorf("Header() value missing QOP field")
 			}
-			if tt.digest.Parameters.NC != "" && !strings.Contains(headerValue, `nc=`+tt.digest.Parameters.NC) {
+			if p.QOP == "" && strings.Contains(headerValue, `qop=`) {
+				t.Errorf("Header() value must not carry a qop field without qop")
+			}
+			if p.NC != "" && !strings.Contains(headerValue, `nc=`+p.NC) {
 				t.Errorf("Header() value missing NC field")
 			}
-			if tt.digest.Parameters.CNonce != "" && !strings.Contains(headerValue, `cnonce="`+tt.digest.Parameters.CNonce+`"`) {
+			if p.CNonce != "" && !strings.Contains(headerValue, `cnonce="`+p.CNonce+`"`) {
 				t.Errorf("Header() value missing CNonce field")
 			}
-			if tt.digest.Parameters.Opaque != "" && !strings.Contains(headerValue, `opaque="`+tt.digest.Parameters.Opaque+`"`) {
+			if p.CNonce == "" && strings.Contains(headerValue, `cnonce=`) {
+				t.Errorf("Header() value must not carry a cnonce field without qop")
+			}
+			if p.Opaque != "" && !strings.Contains(headerValue, `opaque="`+p.Opaque+`"`) {
 				t.Errorf("Header() value missing Opaque field")
+			}
+		})
+	}
+}
+
+func TestDigest_Header_Errors(t *testing.T) {
+	noCNonce := rfcDigest(auth.DigestMD5)
+	noCNonce.Parameters.CNonce = ""
+
+	noNC := rfcDigest(auth.DigestMD5)
+	noNC.Parameters.NC = ""
+
+	unknownQOP := rfcDigest(auth.DigestMD5)
+	unknownQOP.Parameters.QOP = "invalid"
+
+	badUserHash := rfcDigest("invalid")
+	badUserHash.Parameters.QOP = ""
+	badUserHash.Parameters.UserHash = true
+
+	badSess := rfcDigest("invalid-sess")
+	badSess.Parameters.QOP = ""
+
+	badAuthInt := rfcDigest("invalid")
+	badAuthInt.Parameters.QOP = auth.DigestQOPAuthInt
+
+	badAuth := rfcDigest("invalid")
+
+	tests := []struct {
+		name    string
+		digest  *auth.Digest
+		wantErr error
+	}{
+		{
+			name:    "qop without cnonce",
+			digest:  noCNonce,
+			wantErr: auth.ErrNoCNonce,
+		},
+		{
+			name:    "qop without nc",
+			digest:  noNC,
+			wantErr: auth.ErrNoNC,
+		},
+		{
+			name:    "unsupported qop value",
+			digest:  unknownQOP,
+			wantErr: auth.ErrUnknownQOP,
+		},
+		{
+			name:    "unknown algorithm with userhash",
+			digest:  badUserHash,
+			wantErr: auth.ErrUnknownAlgorithm,
+		},
+		{
+			name:    "unknown session algorithm",
+			digest:  badSess,
+			wantErr: auth.ErrUnknownAlgorithm,
+		},
+		{
+			name:    "unknown algorithm with auth-int",
+			digest:  badAuthInt,
+			wantErr: auth.ErrUnknownAlgorithm,
+		},
+		{
+			name:    "unknown algorithm with auth",
+			digest:  badAuth,
+			wantErr: auth.ErrUnknownAlgorithm,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headerName, headerValue, err := tt.digest.Header(
+				http.MethodGet, &url.URL{Path: tt.digest.Parameters.URI}, nil)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Header() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if headerName != "" || headerValue != "" {
+				t.Errorf("Header() = (%q, %q), want empty values on error",
+					headerName, headerValue)
 			}
 		})
 	}
